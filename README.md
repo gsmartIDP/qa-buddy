@@ -93,6 +93,10 @@ Values belong in `.env`, not in the dashboard. Add only their names to a reposit
 
 If a repository's `.npmrc` references a named variable, put that variable in `.env` and add only its name to the repository's environment allowlist. For example, ID Plans uses `GITHUB_IDP_REGISTRY`. The Docker worker reads this token from `.env`, ignoring shell overrides, and displays its first 10 characters followed by `********` in startup and run logs (short tokens are fully redacted). Recreate the worker after changing it. Run logs also indicate when the token is not allowlisted for that repository. GitHub's npm package registry currently requires a personal access token (classic) with at least `read:packages`; keep this package token separate from the repository clone token.
 
+If `GITHUB_IDP_REGISTRY` is used, you will need to include it in the `Allowed environment variable names` field of #2 Runner section.
+
+The Build command override may be required for some apps where the default cannot be completed. As an example, with sub-applications pdf/renderer that cannot build correctly, you can use this override: `pnpm exec turbo run build --concurrency=2 --filter=!pdf --filter=!renderer` to ommit them and have the tool build correctly.
+
 ## Architecture and security
 
 Compose runs two services from one image:
