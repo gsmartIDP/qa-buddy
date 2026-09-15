@@ -114,7 +114,6 @@ export function RepositoryDetailPage() {
               <input
                 value={ref}
                 onChange={(event) => setRef(event.target.value)}
-                required
                 aria-label="Test branch, tag, or commit SHA"
                 placeholder={repository.defaultRef}
                 autoComplete="off"
