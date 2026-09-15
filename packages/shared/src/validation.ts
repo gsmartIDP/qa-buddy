@@ -162,3 +162,12 @@ export const runRequestSchema = z.object({
 });
 
 export type RepositoryInputValidation = z.infer<typeof repositoryInputSchema>;
+
+export const coverageFileQuerySchema = z.object({
+  app: z.string().trim().min(1).max(100).optional(),
+  metric: z.enum(["lines", "statements", "functions", "branches"]).optional(),
+  maxPercent: z.coerce.number().min(0).max(100).optional(),
+  search: z.string().trim().min(1).max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(1_000).optional(),
+  offset: z.coerce.number().int().min(0).optional()
+});

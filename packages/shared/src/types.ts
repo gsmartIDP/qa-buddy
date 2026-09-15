@@ -69,6 +69,65 @@ export interface CoverageSummary {
   branches: CoverageMetric | null;
 }
 
+export interface CoverageFileEntry {
+  path: string;
+  lines: CoverageMetric | null;
+  statements: CoverageMetric | null;
+  functions: CoverageMetric | null;
+  branches: CoverageMetric | null;
+}
+
+export interface CoverageReport {
+  summary: CoverageSummary;
+  files: CoverageFileEntry[];
+}
+
+export type CoverageMetricName = "lines" | "statements" | "functions" | "branches";
+
+export const coverageMetricNames: CoverageMetricName[] = [
+  "lines",
+  "statements",
+  "functions",
+  "branches"
+];
+
+/**
+ * Per-app view of the most recent coverage worth analysing. Snapshots are
+ * replaced in place rather than retained per run, and deliberately survive run
+ * history pruning.
+ */
+export interface CoverageSnapshot {
+  repositoryId: string;
+  appName: string;
+  runId: string | null;
+  resolvedSha: string | null;
+  coverageFormat: CoverageFormat;
+  coveragePath: string | null;
+  fileCount: number;
+  capturedAt: string;
+  summary: CoverageSummary;
+}
+
+export interface CoverageFileQuery {
+  appName?: string;
+  metric?: CoverageMetricName;
+  maxPercent?: number;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CoverageFileRow extends CoverageFileEntry {
+  appName: string;
+}
+
+export interface CoverageFilePage {
+  files: CoverageFileRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export type TestCaseStatus = "passed" | "failed" | "skipped" | "todo";
 
 export interface TestCaseResult {

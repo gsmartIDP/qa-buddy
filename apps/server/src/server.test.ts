@@ -149,4 +149,51 @@ describe("repository API", () => {
     expect(queued.statusCode).toBe(202);
     expect(queued.json().run.useLocalWorkingTree).toBe(true);
   });
+
+  it("serves coverage snapshots and filtered per-file rankings", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+
+    const empty = await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}/coverage` });
+    expect(empty.json().snapshots).toEqual([]);
+
+    const metric = (covered: number, total: number) => ({ covered, total, percent: null });
+    database.replaceCoverageSnapshot(repositoryId, "App", {
+      runId: "run-1",
+      resolvedSha: "abc123",
+      coverageFormat: "istanbul-summary-json",
+      coveragePath: "coverage/coverage-summary.json",
+      summary: {
+        lines: { covered: 5, total: 10, percent: 50 },
+        statements: null,
+        functions: null,
+        branches: { covered: 1, total: 4, percent: 25 }
+      },
+      files: [
+        { path: "src/covered.ts", lines: metric(10, 10), statements: null, functions: null, branches: metric(4, 4) },
+        { path: "src/gap.ts", lines: metric(0, 10), statements: null, functions: null, branches: metric(0, 6) }
+      ]
+    });
+
+    const snapshots = await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}/coverage` });
+    expect(snapshots.json().snapshots).toHaveLength(1);
+    expect(snapshots.json().snapshots[0].fileCount).toBe(2);
+
+    const ranked = await app.inject({
+      method: "GET",
+      url: `/api/repositories/${repositoryId}/coverage/files?metric=branches&maxPercent=50`
+    });
+    expect(ranked.statusCode).toBe(200);
+    expect(ranked.json().files.map((file: { path: string }) => file.path)).toEqual(["src/gap.ts"]);
+    expect(ranked.json().total).toBe(1);
+
+    const invalid = await app.inject({
+      method: "GET",
+      url: `/api/repositories/${repositoryId}/coverage/files?metric=nonsense`
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const missing = await app.inject({ method: "GET", url: "/api/repositories/does-not-exist/coverage" });
+    expect(missing.statusCode).toBe(404);
+  });
 });

@@ -128,6 +128,22 @@ If `GITHUB_IDP_REGISTRY` is used, you will need to include it in the `Allowed en
 
 The Build command override may be required for some apps where the default cannot be completed. As an example, with sub-applications pdf/renderer that cannot build correctly, you can use this override: `pnpm exec turbo run build --concurrency=2 --filter=!pdf --filter=!renderer` to ommit them and have the tool build correctly.
 
+## Coverage gaps
+
+Every run that uses a GitHub ref records a per-file coverage snapshot for each app that produced a report. Open **Coverage gaps** from the repository page to rank files by their weakest metric.
+
+Snapshots are deliberately not part of run history:
+
+- One snapshot per app, replaced in place. Storing per-file coverage for every retained run would keep twenty near-identical copies of the same data.
+- They survive run history pruning. The run that produced a snapshot can age out of the latest 20 without taking the snapshot with it; the recorded commit still says where it came from.
+- **Local working tree runs never overwrite a snapshot.** An uncommitted checkout is not reproducible, so it cannot replace a baseline captured from a commit that exists on the remote. The run log says when a snapshot was skipped for this reason.
+
+The view ranks by branch coverage by default, because branches are where untested edge cases hide. Filter by app, metric, threshold, or path fragment. Files with a zero denominator, such as a types-only module with no executable branches, have no measurable coverage and sort last rather than appearing as 0%.
+
+Istanbul summary reports provide lines, statements, functions, and branches per file. LCOV provides lines, functions, and branches; statements are `N/A` because LCOV does not define a separate statement metric.
+
+Coverage percentage identifies lines that never executed, not behaviour that was never considered. A file at 100% line coverage with weak assertions still looks complete here. Treat zero-coverage files and low branch coverage as leads to investigate rather than a finished verdict.
+
 ## Architecture and security
 
 Compose runs two services from one image:
@@ -158,6 +174,8 @@ Useful endpoints:
 - `GET|PATCH|DELETE /api/repositories/:repositoryId`
 - `POST /api/repositories/:repositoryId/runs`
 - `GET /api/repositories/:repositoryId/runs`
+- `GET /api/repositories/:repositoryId/coverage` (per-app snapshot metadata)
+- `GET /api/repositories/:repositoryId/coverage/files` (ranked per-file coverage; `app`, `metric`, `maxPercent`, `search`, `limit`, `offset`)
 - `GET /api/runs/:runId`
 - `GET /api/runs/:runId/log` (full redacted log download)
 - `GET /api/runs/:runId/events` (server-sent events)

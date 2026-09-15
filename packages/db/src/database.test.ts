@@ -216,4 +216,138 @@ describe("QaBuddyDatabase", () => {
     expect(database.getRun(run.id)?.dirty).toBe(true);
     expect(database.getRun(run.id)?.resolvedSha).toBe("abc123");
   });
+
+  const coverageFile = (
+    path: string,
+    lines: [number, number],
+    branches: [number, number]
+  ) => ({
+    path,
+    lines: { covered: lines[0], total: lines[1], percent: null },
+    statements: null,
+    functions: { covered: 1, total: 2, percent: null },
+    branches: { covered: branches[0], total: branches[1], percent: null }
+  });
+
+  const summary = {
+    lines: { covered: 5, total: 10, percent: 50 },
+    statements: null,
+    functions: { covered: 1, total: 2, percent: 50 },
+    branches: { covered: 1, total: 4, percent: 25 }
+  };
+
+  function seedSnapshot(repositoryId: string, appName = "Web") {
+    database.replaceCoverageSnapshot(repositoryId, appName, {
+      runId: "run-1",
+      resolvedSha: "abc123",
+      coverageFormat: "istanbul-summary-json",
+      coveragePath: "coverage/coverage-summary.json",
+      summary,
+      files: [
+        coverageFile("src/well-tested.ts", [10, 10], [8, 8]),
+        coverageFile("src/partial.ts", [5, 10], [2, 8]),
+        coverageFile("src/untested.ts", [0, 20], [0, 12]),
+        coverageFile("src/types.ts", [0, 0], [0, 0])
+      ]
+    });
+  }
+
+  it("stores a per-app coverage snapshot and replaces it in place", () => {
+    const repository = database.createRepository(input);
+    seedSnapshot(repository.id);
+    seedSnapshot(repository.id, "API");
+
+    const snapshots = database.listCoverageSnapshots(repository.id);
+    expect(snapshots.map((snapshot) => snapshot.appName)).toEqual(["API", "Web"]);
+    expect(snapshots[0]?.fileCount).toBe(4);
+    expect(snapshots[0]?.resolvedSha).toBe("abc123");
+    expect(snapshots[0]?.summary.branches).toEqual({ covered: 1, total: 4, percent: 25 });
+
+    database.replaceCoverageSnapshot(repository.id, "Web", {
+      runId: "run-2",
+      resolvedSha: "def456",
+      coverageFormat: "lcov",
+      coveragePath: "coverage/lcov.info",
+      summary,
+      files: [coverageFile("src/only.ts", [1, 2], [1, 2])]
+    });
+
+    const replaced = database.listCoverageSnapshots(repository.id);
+    expect(replaced).toHaveLength(2);
+    const web = replaced.find((snapshot) => snapshot.appName === "Web");
+    expect(web?.fileCount).toBe(1);
+    expect(web?.resolvedSha).toBe("def456");
+    expect(database.queryCoverageFiles(repository.id, { appName: "Web" }).total).toBe(1);
+  });
+
+  it("ranks the weakest files first and treats zero-denominator files as unmeasured", () => {
+    const repository = database.createRepository(input);
+    seedSnapshot(repository.id);
+
+    const branches = database.queryCoverageFiles(repository.id, { metric: "branches" });
+    expect(branches.files.map((file) => file.path)).toEqual([
+      "src/untested.ts",
+      "src/partial.ts",
+      "src/well-tested.ts",
+      "src/types.ts"
+    ]);
+    expect(branches.files[0]?.branches?.percent).toBe(0);
+    // A file with a zero denominator has no measurable coverage and sorts last.
+    expect(branches.files[3]?.branches?.percent).toBeNull();
+
+    const belowHalf = database.queryCoverageFiles(repository.id, { metric: "branches", maxPercent: 50 });
+    expect(belowHalf.files.map((file) => file.path)).toEqual(["src/untested.ts", "src/partial.ts"]);
+    expect(belowHalf.total).toBe(2);
+
+    const zeroOnly = database.queryCoverageFiles(repository.id, { metric: "branches", maxPercent: 0 });
+    expect(zeroOnly.files.map((file) => file.path)).toEqual(["src/untested.ts"]);
+  });
+
+  it("filters by path and pages through results", () => {
+    const repository = database.createRepository(input);
+    seedSnapshot(repository.id);
+
+    expect(database.queryCoverageFiles(repository.id, { search: "untested" }).files).toHaveLength(1);
+    expect(database.queryCoverageFiles(repository.id, { search: "src/" }).total).toBe(4);
+    expect(database.queryCoverageFiles(repository.id, { search: "%" }).total).toBe(0);
+
+    const firstPage = database.queryCoverageFiles(repository.id, { metric: "branches", limit: 2 });
+    expect(firstPage.files).toHaveLength(2);
+    expect(firstPage.total).toBe(4);
+
+    const secondPage = database.queryCoverageFiles(repository.id, { metric: "branches", limit: 2, offset: 2 });
+    expect(secondPage.files.map((file) => file.path)).toEqual(["src/well-tested.ts", "src/types.ts"]);
+  });
+
+  it("keeps the snapshot when the run that produced it is pruned from history", () => {
+    const repository = database.createRepository(input);
+    const run = database.createRun(repository.id, "main");
+    database.updateRun(run.id, { status: "passed", finished: true });
+    database.replaceCoverageSnapshot(repository.id, "Web", {
+      runId: run.id,
+      resolvedSha: "abc123",
+      coverageFormat: "istanbul-summary-json",
+      coveragePath: "coverage/coverage-summary.json",
+      summary,
+      files: [coverageFile("src/only.ts", [1, 2], [1, 2])]
+    });
+
+    expect(database.pruneRuns(repository.id, 0)).toContain(run.id);
+    expect(database.getRun(run.id)).toBeNull();
+
+    const snapshots = database.listCoverageSnapshots(repository.id);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.runId).toBe(run.id);
+    expect(database.queryCoverageFiles(repository.id).total).toBe(1);
+  });
+
+  it("removes snapshots when the repository is deleted", () => {
+    const repository = database.createRepository(input);
+    seedSnapshot(repository.id);
+    database.deleteRepository(repository.id);
+    expect(database.listCoverageSnapshots(repository.id)).toHaveLength(0);
+    expect(
+      database.connection.prepare("SELECT COUNT(*) AS count FROM coverage_files").get()
+    ).toEqual({ count: 0 });
+  });
 });

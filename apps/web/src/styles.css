@@ -542,3 +542,22 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 @media (max-width: 540px) {
   .filter-tabs button { flex: 1; min-width: 0; white-space: normal; gap: 4px; padding: 5px 4px; min-height: 34px; font-size: 10px; }
 }
+
+.gap-filters { display: flex; flex-wrap: wrap; gap: 14px; padding: 18px 25px; border-bottom: 1px solid var(--border, #ece7f3); }
+.gap-filters label { display: flex; flex-direction: column; gap: 5px; min-width: 150px; }
+.gap-filters label > span { font-size: 12px; font-weight: 600; color: #7a648e; }
+.gap-filters .gap-search { flex: 1; min-width: 200px; }
+.gap-path { font-size: 12px; word-break: break-all; }
+.gap-metric { display: flex; flex-direction: column; gap: 2px; }
+.gap-metric strong { font-size: 13px; }
+.gap-metric small { font-size: 11px; color: #796d84; }
+.gap-metric-critical strong { color: #b3261e; }
+.gap-metric-poor strong { color: #c2601a; }
+.gap-metric-fair strong { color: #8a6d1f; }
+.gap-metric-good strong { color: #2f7a43; }
+.gap-paging { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 25px; }
+
+@media (max-width: 720px) {
+  .gap-filters { flex-direction: column; }
+  .gap-paging { flex-direction: column; }
+}

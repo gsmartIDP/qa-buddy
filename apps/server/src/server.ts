@@ -3,7 +3,12 @@ import path from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { QaBuddyDatabase } from "@qa-buddy/db";
-import { repositoryInputSchema, runRequestSchema, terminalRunStatuses } from "@qa-buddy/shared";
+import {
+  coverageFileQuerySchema,
+  repositoryInputSchema,
+  runRequestSchema,
+  terminalRunStatuses
+} from "@qa-buddy/shared";
 import { initialLogOffset, readLogChunk } from "./log-stream.js";
 
 export interface ServerOptions {
@@ -141,6 +146,45 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
       }
     }
   );
+
+
+  app.get<{ Params: { repositoryId: string } }>(
+    "/api/repositories/:repositoryId/coverage",
+    async (request, reply) => {
+      if (!database.getRepository(request.params.repositoryId)) {
+        return reply.code(404).send({ error: "Repository not found" });
+      }
+      return { snapshots: database.listCoverageSnapshots(request.params.repositoryId) };
+    }
+  );
+
+  app.get<{
+    Params: { repositoryId: string };
+    Querystring: {
+      app?: string;
+      metric?: string;
+      maxPercent?: string;
+      search?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>("/api/repositories/:repositoryId/coverage/files", async (request, reply) => {
+    if (!database.getRepository(request.params.repositoryId)) {
+      return reply.code(404).send({ error: "Repository not found" });
+    }
+    const parsed = coverageFileQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: issueMessage(parsed.error) });
+    }
+    return database.queryCoverageFiles(request.params.repositoryId, {
+      appName: parsed.data.app,
+      metric: parsed.data.metric,
+      maxPercent: parsed.data.maxPercent,
+      search: parsed.data.search,
+      limit: parsed.data.limit,
+      offset: parsed.data.offset
+    });
+  });
 
   app.get<{ Params: { repositoryId: string } }>(
     "/api/repositories/:repositoryId/runs",

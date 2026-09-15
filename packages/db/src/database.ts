@@ -6,6 +6,12 @@ import type {
   AppConfiguration,
   AppRun,
   AppRunStatus,
+  CoverageFileEntry,
+  CoverageFilePage,
+  CoverageFileQuery,
+  CoverageFileRow,
+  CoverageMetricName,
+  CoverageSnapshot,
   CoverageSummary,
   Repository,
   RepositoryDetail,
@@ -16,7 +22,7 @@ import type {
   RunSummary,
   TestResults
 } from "@qa-buddy/shared";
-import { activeRunStatuses } from "@qa-buddy/shared";
+import { activeRunStatuses, coverageMetricNames } from "@qa-buddy/shared";
 
 const initialMigrationSql = `
   CREATE TABLE repositories (
@@ -108,6 +114,42 @@ const migrations = [
       ALTER TABLE runs ADD COLUMN use_local_working_tree INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE runs ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0;
     `
+  },
+  {
+    version: 7,
+    // run_id is intentionally not a foreign key: snapshots must survive the run
+    // history pruning that deletes the run they were captured from.
+    sql: `
+      CREATE TABLE coverage_snapshots (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        app_name TEXT NOT NULL,
+        run_id TEXT,
+        resolved_sha TEXT,
+        coverage_format TEXT NOT NULL,
+        coverage_path TEXT,
+        summary_json TEXT NOT NULL,
+        file_count INTEGER NOT NULL,
+        captured_at TEXT NOT NULL,
+        UNIQUE(repository_id, app_name COLLATE NOCASE)
+      );
+
+      CREATE TABLE coverage_files (
+        snapshot_id TEXT NOT NULL REFERENCES coverage_snapshots(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,
+        lines_covered INTEGER,
+        lines_total INTEGER,
+        statements_covered INTEGER,
+        statements_total INTEGER,
+        functions_covered INTEGER,
+        functions_total INTEGER,
+        branches_covered INTEGER,
+        branches_total INTEGER,
+        PRIMARY KEY (snapshot_id, file_path)
+      );
+
+      CREATE INDEX coverage_files_snapshot_idx ON coverage_files(snapshot_id);
+    `
   }
 ] as const;
 
@@ -171,6 +213,33 @@ interface AppRunRow {
   test_results_error: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+interface CoverageSnapshotRow {
+  id: string;
+  repository_id: string;
+  app_name: string;
+  run_id: string | null;
+  resolved_sha: string | null;
+  coverage_format: CoverageSnapshot["coverageFormat"];
+  coverage_path: string | null;
+  summary_json: string;
+  file_count: number;
+  captured_at: string;
+}
+
+interface CoverageFileRowRecord {
+  app_name: string;
+  snapshot_id: string;
+  file_path: string;
+  lines_covered: number | null;
+  lines_total: number | null;
+  statements_covered: number | null;
+  statements_total: number | null;
+  functions_covered: number | null;
+  functions_total: number | null;
+  branches_covered: number | null;
+  branches_total: number | null;
 }
 
 function now(): string {
@@ -584,6 +653,157 @@ export class QaBuddyDatabase {
       return result.changes === 1 ? row.id : null;
     }).immediate();
     return id ? this.getRun(id) : null;
+  }
+
+
+  // ----- Per-file coverage snapshots -------------------------------------------------
+
+  private mapCoverageFileRow(row: CoverageFileRowRecord): CoverageFileRow {
+    const build = (covered: number | null, total: number | null) =>
+      covered === null || total === null
+        ? null
+        : { covered, total, percent: total === 0 ? null : Math.round((covered / total) * 1_000) / 10 };
+    return {
+      appName: row.app_name,
+      path: row.file_path,
+      lines: build(row.lines_covered, row.lines_total),
+      statements: build(row.statements_covered, row.statements_total),
+      functions: build(row.functions_covered, row.functions_total),
+      branches: build(row.branches_covered, row.branches_total)
+    };
+  }
+
+  /**
+   * Replaces the snapshot for one app. Callers are expected to skip runs whose
+   * source was a local working tree, so the snapshot always reflects a commit
+   * that exists on the remote.
+   */
+  replaceCoverageSnapshot(
+    repositoryId: string,
+    appName: string,
+    values: {
+      runId: string | null;
+      resolvedSha: string | null;
+      coverageFormat: CoverageSnapshot["coverageFormat"];
+      coveragePath: string | null;
+      summary: CoverageSummary;
+      files: CoverageFileEntry[];
+    }
+  ): void {
+    const snapshotId = randomUUID();
+    const timestamp = now();
+    this.connection.transaction(() => {
+      this.connection
+        .prepare("DELETE FROM coverage_snapshots WHERE repository_id = ? AND app_name = ? COLLATE NOCASE")
+        .run(repositoryId, appName);
+      this.connection
+        .prepare(`
+          INSERT INTO coverage_snapshots(
+            id, repository_id, app_name, run_id, resolved_sha, coverage_format,
+            coverage_path, summary_json, file_count, captured_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          snapshotId,
+          repositoryId,
+          appName,
+          values.runId,
+          values.resolvedSha,
+          values.coverageFormat,
+          values.coveragePath,
+          JSON.stringify(values.summary),
+          values.files.length,
+          timestamp
+        );
+
+      const statement = this.connection.prepare(`
+        INSERT INTO coverage_files(
+          snapshot_id, file_path,
+          lines_covered, lines_total, statements_covered, statements_total,
+          functions_covered, functions_total, branches_covered, branches_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const file of values.files) {
+        statement.run(
+          snapshotId,
+          file.path,
+          file.lines?.covered ?? null,
+          file.lines?.total ?? null,
+          file.statements?.covered ?? null,
+          file.statements?.total ?? null,
+          file.functions?.covered ?? null,
+          file.functions?.total ?? null,
+          file.branches?.covered ?? null,
+          file.branches?.total ?? null
+        );
+      }
+    })();
+  }
+
+  listCoverageSnapshots(repositoryId: string): CoverageSnapshot[] {
+    const rows = this.connection
+      .prepare("SELECT * FROM coverage_snapshots WHERE repository_id = ? ORDER BY app_name COLLATE NOCASE ASC")
+      .all(repositoryId) as CoverageSnapshotRow[];
+    return rows.map((row) => ({
+      repositoryId: row.repository_id,
+      appName: row.app_name,
+      runId: row.run_id,
+      resolvedSha: row.resolved_sha,
+      coverageFormat: row.coverage_format,
+      coveragePath: row.coverage_path,
+      fileCount: row.file_count,
+      capturedAt: row.captured_at,
+      summary: JSON.parse(row.summary_json) as CoverageSummary
+    }));
+  }
+
+  queryCoverageFiles(repositoryId: string, query: CoverageFileQuery = {}): CoverageFilePage {
+    const metric: CoverageMetricName = coverageMetricNames.includes(query.metric as CoverageMetricName)
+      ? (query.metric as CoverageMetricName)
+      : "lines";
+    const limit = Math.min(Math.max(query.limit ?? 100, 1), 1_000);
+    const offset = Math.max(query.offset ?? 0, 0);
+
+    const conditions = ["s.repository_id = ?"];
+    const parameters: unknown[] = [repositoryId];
+    if (query.appName) {
+      conditions.push("s.app_name = ? COLLATE NOCASE");
+      parameters.push(query.appName);
+    }
+    if (query.search) {
+      conditions.push("f.file_path LIKE ? ESCAPE '\\'");
+      parameters.push(`%${query.search.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`);
+    }
+    // Files with a zero denominator have no measurable coverage; they are never
+    // "gaps" and would otherwise sort as 0%.
+    const ratio = `CAST(f.${metric}_covered AS REAL) / NULLIF(f.${metric}_total, 0)`;
+    if (query.maxPercent !== undefined) {
+      conditions.push(`${ratio} IS NOT NULL AND ${ratio} <= ?`);
+      parameters.push(query.maxPercent / 100);
+    }
+
+    const where = `WHERE ${conditions.join(" AND ")}`;
+    const total = (
+      this.connection
+        .prepare(`
+          SELECT COUNT(*) AS count FROM coverage_files f
+          JOIN coverage_snapshots s ON s.id = f.snapshot_id
+          ${where}
+        `)
+        .get(...parameters) as { count: number }
+    ).count;
+
+    const rows = this.connection
+      .prepare(`
+        SELECT s.app_name, f.* FROM coverage_files f
+        JOIN coverage_snapshots s ON s.id = f.snapshot_id
+        ${where}
+        ORDER BY (${ratio}) IS NULL ASC, ${ratio} ASC, f.file_path ASC
+        LIMIT ? OFFSET ?
+      `)
+      .all(...parameters, limit, offset) as CoverageFileRowRecord[];
+
+    return { files: rows.map((row) => this.mapCoverageFileRow(row)), total, limit, offset };
   }
 
   updateRun(

@@ -3,9 +3,10 @@ import path from "node:path";
 import Docker from "dockerode";
 import { QaBuddyDatabase } from "@qa-buddy/db";
 import {
-  parseIstanbulSummary,
-  parseLcov,
+  parseIstanbulReport,
+  parseLcovReport,
   type AppRun,
+  type CoverageFileEntry,
   type CoverageFormat,
   type CoverageSummary,
   type RunDetail,
@@ -37,6 +38,29 @@ export interface WorkerOptions {
   githubToken?: string;
   historyLimit: number;
   pollIntervalMs?: number;
+}
+
+export type CoverageSnapshotSkipReason = "no-coverage" | "local-working-tree" | "no-files";
+
+export const coverageSkipMessages: Record<CoverageSnapshotSkipReason, string> = {
+  "no-coverage": "this app produced no usable coverage report",
+  "local-working-tree": "local working tree runs never overwrite the snapshot",
+  "no-files": "the coverage report contained no per-file entries"
+};
+
+/**
+ * Decides whether a finished app run may replace the stored coverage snapshot.
+ * Returns the reason to skip, or null to record it.
+ */
+export function coverageSnapshotSkipReason(options: {
+  useLocalWorkingTree: boolean;
+  hasCoverage: boolean;
+  fileCount: number;
+}): CoverageSnapshotSkipReason | null {
+  if (!options.hasCoverage) return "no-coverage";
+  if (options.useLocalWorkingTree) return "local-working-tree";
+  if (options.fileCount === 0) return "no-files";
+  return null;
 }
 
 export class QaBuddyWorker {
@@ -90,7 +114,12 @@ export class QaBuddyWorker {
   private parseCoverage(
     repositoryDirectory: string,
     appRun: AppRun
-  ): { coverage: CoverageSummary; coverageFormat: CoverageFormat; coveragePath: string } {
+  ): {
+    coverage: CoverageSummary;
+    coverageFiles: CoverageFileEntry[];
+    coverageFormat: CoverageFormat;
+    coveragePath: string;
+  } {
     const reportPath = path.resolve(repositoryDirectory, appRun.coveragePath);
     const repositoryRoot = path.resolve(repositoryDirectory);
     if (reportPath !== repositoryRoot && !reportPath.startsWith(`${repositoryRoot}${path.sep}`)) {
@@ -100,11 +129,66 @@ export class QaBuddyWorker {
       throw new Error(`Coverage report was not created at ${appRun.coveragePath}`);
     }
     const contents = readFileSync(reportPath, "utf8");
+    const parseOptions = {
+      rootDirectory: repositoryDirectory,
+      workingDirectory: appRun.workingDirectory
+    };
+    const report =
+      appRun.coverageFormat === "lcov"
+        ? parseLcovReport(contents, parseOptions)
+        : parseIstanbulReport(contents, parseOptions);
     return {
-      coverage: appRun.coverageFormat === "lcov" ? parseLcov(contents) : parseIstanbulSummary(contents),
+      coverage: report.summary,
+      coverageFiles: report.files,
       coverageFormat: appRun.coverageFormat,
       coveragePath: appRun.coveragePath
     };
+  }
+
+
+  /**
+   * Replaces this app's per-file coverage snapshot. Local working tree runs are
+   * skipped so an uncommitted checkout never overwrites the baseline captured
+   * from a commit that exists on the remote.
+   */
+  private recordCoverageSnapshot(
+    run: RunDetail,
+    appRun: AppRun,
+    logger: RunLogger,
+    resolvedSha: string,
+    result: {
+      coverage: CoverageSummary | null;
+      coverageFiles: CoverageFileEntry[];
+      coverageFormat?: CoverageFormat;
+      coveragePath?: string;
+    }
+  ): void {
+    const skip = coverageSnapshotSkipReason({
+      useLocalWorkingTree: run.useLocalWorkingTree,
+      hasCoverage: Boolean(result.coverage && result.coverageFormat),
+      fileCount: result.coverageFiles.length
+    });
+    if (skip) {
+      if (skip !== "no-coverage") {
+        logger.line(`${appRun.name} coverage snapshot not updated: ${coverageSkipMessages[skip]}`);
+      }
+      return;
+    }
+    try {
+      this.options.database.replaceCoverageSnapshot(run.repositoryId, appRun.name, {
+        runId: run.id,
+        resolvedSha,
+        coverageFormat: result.coverageFormat!,
+        coveragePath: result.coveragePath ?? null,
+        summary: result.coverage!,
+        files: result.coverageFiles
+      });
+      logger.line(`Updated the ${appRun.name} coverage snapshot with ${result.coverageFiles.length} files`);
+    } catch (error) {
+      logger.line(
+        `Unable to update the ${appRun.name} coverage snapshot: ${error instanceof Error ? error.message : "unknown error"}`
+      );
+    }
   }
 
   private safeRunDirectory(runId: string): string {
@@ -258,6 +342,7 @@ export class QaBuddyWorker {
         let coverageFormat: CoverageFormat | undefined;
         let coveragePath: string | undefined;
         let coverageError: string | null = null;
+        let coverageFiles: CoverageFileEntry[] = [];
         let testResults: TestResults | null = null;
         let testResultsError: string | null = null;
         try {
@@ -290,6 +375,7 @@ export class QaBuddyWorker {
                 )
               : this.parseCoverage(repositoryDirectory, appRun);
             coverage = discovered.coverage;
+            coverageFiles = discovered.coverageFiles;
             coverageFormat = discovered.coverageFormat;
             coveragePath = discovered.coveragePath;
           } catch (error) {
@@ -304,6 +390,12 @@ export class QaBuddyWorker {
 
         const passed = exitCode === 0 && coverage !== null;
         if (!passed) appFailures += 1;
+        this.recordCoverageSnapshot(run, appRun, logger, source.resolvedSha, {
+          coverage,
+          coverageFiles,
+          coverageFormat,
+          coveragePath
+        });
         this.options.database.finishAppRun(appRun.id, {
           status: passed ? "passed" : "failed",
           exitCode,

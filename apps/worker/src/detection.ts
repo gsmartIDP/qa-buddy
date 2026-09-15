@@ -3,9 +3,10 @@ import path from "node:path";
 import fg from "fast-glob";
 import { parse as parseYaml } from "yaml";
 import {
-  parseIstanbulSummary,
-  parseLcov,
+  parseIstanbulReport,
+  parseLcovReport,
   type AppInput,
+  type CoverageFileEntry,
   type CoverageFormat,
   type CoverageSummary
 } from "@qa-buddy/shared";
@@ -33,6 +34,7 @@ export interface WorkspaceDetectionResult {
 
 export interface DiscoveredCoverage {
   coverage: CoverageSummary;
+  coverageFiles: CoverageFileEntry[];
   coverageFormat: CoverageFormat;
   coveragePath: string;
 }
@@ -290,9 +292,14 @@ export function discoverCoverageReport(
     const reportPath = containedReportPath(repositoryDirectory, candidate.path);
     if (!reportPath || !existsSync(reportPath)) continue;
     const contents = readFileSync(reportPath, "utf8");
+    const parseOptions = { rootDirectory: repositoryDirectory, workingDirectory };
+    const report =
+      candidate.format === "lcov"
+        ? parseLcovReport(contents, parseOptions)
+        : parseIstanbulReport(contents, parseOptions);
     return {
-      coverage:
-        candidate.format === "lcov" ? parseLcov(contents) : parseIstanbulSummary(contents),
+      coverage: report.summary,
+      coverageFiles: report.files,
       coverageFormat: candidate.format,
       coveragePath: candidate.path
     };
