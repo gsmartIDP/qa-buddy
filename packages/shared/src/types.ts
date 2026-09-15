@@ -30,6 +30,12 @@ export interface RepositoryInput {
   name: string;
   githubUrl: string;
   defaultRef: string;
+  /**
+   * Optional path to this repository's checkout on the host, relative to the
+   * directory bind-mounted at QA_BUDDY_LOCAL_SOURCE_DIR. Enables runs against
+   * the local working tree instead of a GitHub fetch.
+   */
+  localPath?: string;
   runnerImage: string;
   setupCommand?: string;
   buildCommand?: string;
@@ -108,6 +114,10 @@ export interface RunSummary {
   repositoryId: string;
   requestedRef: string;
   resolvedSha: string | null;
+  /** True when the source was archived from the local checkout rather than fetched. */
+  useLocalWorkingTree: boolean;
+  /** True when the local working tree had uncommitted changes at archive time. */
+  dirty: boolean;
   status: RunStatus;
   error: string | null;
   selectedApps: string[] | null;
@@ -126,6 +136,7 @@ export interface Repository {
   name: string;
   githubUrl: string;
   defaultRef: string;
+  localPath?: string;
   runnerImage: string;
   setupCommand?: string;
   buildCommand?: string;

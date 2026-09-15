@@ -118,3 +118,33 @@ describe("repository validation", () => {
     expect(runRequestSchema.safeParse({ apps: ["Web", "web"] }).success).toBe(false);
   });
 });
+
+describe("local checkout path", () => {
+  const base = {
+    name: "Example",
+    githubUrl: "https://github.com/example/repository",
+    defaultRef: "main",
+    runnerImage: "node:22-bookworm",
+    autoDetect: true,
+    apps: []
+  };
+
+  it("accepts a relative path inside the mounted source directory", () => {
+    const parsed = repositoryInputSchema.parse({ ...base, localPath: "group/my-repo" });
+    expect(parsed.localPath).toBe("group/my-repo");
+  });
+
+  it("treats an empty value as unset", () => {
+    expect(repositoryInputSchema.parse({ ...base, localPath: "" }).localPath).toBeUndefined();
+    expect(repositoryInputSchema.parse(base).localPath).toBeUndefined();
+  });
+
+  it.each(["../escape", "nested/../../escape", "/absolute"])("rejects %s", (localPath) => {
+    expect(repositoryInputSchema.safeParse({ ...base, localPath }).success).toBe(false);
+  });
+
+  it("defaults local working tree runs to off", () => {
+    expect(runRequestSchema.parse({}).useLocalWorkingTree).toBe(false);
+    expect(runRequestSchema.parse({ useLocalWorkingTree: true }).useLocalWorkingTree).toBe(true);
+  });
+});

@@ -42,10 +42,14 @@ services:
       QA_BUDDY_DATA_DIR: /data
       QA_BUDDY_WORKSPACE_DIR: /workspaces
       QA_BUDDY_WORKSPACE_VOLUME: qa-buddy-workspaces
+      QA_BUDDY_LOCAL_SOURCE_DIR: /local-source
       RUN_HISTORY_LIMIT: "${RUN_HISTORY_LIMIT:-20}"
     volumes:
       - qa-buddy-data:/data
       - qa-buddy-workspaces:/workspaces
+      # Read-only host checkouts for local working tree runs. Point
+      # QA_BUDDY_LOCAL_SOURCE_ROOT in .env at the directory holding your repos.
+      - ${QA_BUDDY_LOCAL_SOURCE_ROOT:-./docker}:/local-source:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ./apps/worker/src:/app/apps/worker/src:ro
       - ./packages/db/src:/app/packages/db/src:ro

@@ -13,7 +13,12 @@ import {
 } from "@qa-buddy/shared";
 import { clearAppReports, detectPnpmWorkspaceApps, discoverCoverageReport } from "./detection.js";
 import { cleanupOrphanRunners, DockerRunner, RunnerTimeoutError } from "./docker-runner.js";
-import { cloneRepository, githubAuthenticationMessage, githubRegistryAuthenticationMessage } from "./git.js";
+import {
+  archiveLocalWorkingTree,
+  cloneRepository,
+  githubAuthenticationMessage,
+  githubRegistryAuthenticationMessage
+} from "./git.js";
 import { RunLogger } from "./logger.js";
 import { ProcessError } from "./process.js";
 import { readTestResults } from "./test-results.js";
@@ -27,6 +32,8 @@ export interface WorkerOptions {
   dataDirectory: string;
   workspaceDirectory: string;
   workspaceVolume: string;
+  /** Container path of the read-only host bind mount holding local checkouts. */
+  localSourceDirectory?: string;
   githubToken?: string;
   historyLimit: number;
   pollIntervalMs?: number;
@@ -107,6 +114,31 @@ export class QaBuddyWorker {
     return runDirectory;
   }
 
+  private async archiveLocalSource(
+    run: RunDetail,
+    runDirectory: string,
+    logger: RunLogger,
+    deadline: number
+  ): Promise<{ repositoryDirectory: string; resolvedSha: string; dirty: boolean }> {
+    const localSourceDirectory = this.options.localSourceDirectory;
+    if (!localSourceDirectory) {
+      throw new Error(
+        "Local working tree runs are not enabled. Set QA_BUDDY_LOCAL_SOURCE_ROOT in .env and recreate the worker."
+      );
+    }
+    const localPath = run.configurationSnapshot.localPath;
+    if (!localPath) {
+      throw new Error("This repository has no local checkout path configured");
+    }
+    return await archiveLocalWorkingTree({
+      localSourceDirectory,
+      localPath,
+      runDirectory,
+      logger,
+      timeoutMs: () => this.remaining(deadline)
+    });
+  }
+
   private async executeRun(run: RunDetail): Promise<void> {
     const environment = this.runnerEnvironment(run);
     const logger = new RunLogger(this.options.dataDirectory, run.id, [
@@ -121,7 +153,11 @@ export class QaBuddyWorker {
     let appRuns = run.appRuns;
 
     logger.line(`Run ${run.id} queued for ${run.configurationSnapshot.githubUrl}`);
-    logger.line(`Requested ref: ${run.requestedRef}`);
+    logger.line(
+      run.useLocalWorkingTree
+        ? `Source: local working tree at ${run.configurationSnapshot.localPath}`
+        : `Requested ref: ${run.requestedRef}`
+    );
     logger.line(
       run.configurationSnapshot.selectedApps
         ? `Selected apps: ${run.configurationSnapshot.selectedApps.join(", ")}`
@@ -134,17 +170,29 @@ export class QaBuddyWorker {
     }
 
     try {
-      const clone = await cloneRepository({
-        githubUrl: run.configurationSnapshot.githubUrl,
-        ref: run.requestedRef,
-        runDirectory,
-        githubToken: this.options.githubToken,
-        logger,
-        timeoutMs: () => this.remaining(deadline)
+      const source = run.useLocalWorkingTree
+        ? await this.archiveLocalSource(run, runDirectory, logger, deadline)
+        : {
+            ...(await cloneRepository({
+              githubUrl: run.configurationSnapshot.githubUrl,
+              ref: run.requestedRef,
+              runDirectory,
+              githubToken: this.options.githubToken,
+              logger,
+              timeoutMs: () => this.remaining(deadline)
+            })),
+            dirty: false
+          };
+      repositoryDirectory = source.repositoryDirectory;
+      this.options.database.updateRun(run.id, {
+        resolvedSha: source.resolvedSha,
+        dirty: source.dirty
       });
-      repositoryDirectory = clone.repositoryDirectory;
-      this.options.database.updateRun(run.id, { resolvedSha: clone.resolvedSha });
-      logger.line(`Resolved commit: ${clone.resolvedSha}`);
+      logger.line(
+        source.dirty
+          ? `Resolved commit: ${source.resolvedSha} plus uncommitted local changes (not reproducible)`
+          : `Resolved commit: ${source.resolvedSha}`
+      );
 
       if (run.configurationSnapshot.autoDetect) {
         const detection = await detectPnpmWorkspaceApps(

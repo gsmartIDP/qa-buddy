@@ -37,6 +37,7 @@ The Docker worker reads `GITHUB_TOKEN` from `.env`; a token exported in the shel
 Repository configuration includes:
 
 - A GitHub HTTPS URL and default branch, tag, or commit SHA.
+- An optional local checkout path for running against your own working tree.
 - A runner image that provides `/bin/sh` and the required language tools.
 - An optional setup command that runs once at the repository root.
 - An optional build-command override that runs once after setup and before any selected app tests.
@@ -85,6 +86,36 @@ From the repository detail page, a multi-app run can target any subset of the co
 
 The run detail page provides an expandable test-case readout for auto-detected Jest and Vitest apps. It records test names, source test files, durations, statuses, and bounded failure messages. For a manually configured command, QA Buddy will also consume a Jest-compatible JSON report written to `.qa-buddy-test-results.json` in the app working directory. Other test runners continue to use the full redacted log as their detailed readout.
 
+## Run against a local working tree
+
+By default every run fetches a fresh shallow clone from GitHub, so only pushed commits are visible. To test uncommitted work, point QA Buddy at your own checkout.
+
+Set the directory that holds your repositories in `.env`:
+
+```dotenv
+QA_BUDDY_LOCAL_SOURCE_ROOT=/Users/you/Repositories
+```
+
+Then recreate the worker so it picks up the new mount:
+
+```bash
+docker compose up -d --force-recreate worker
+```
+
+You will need to edit/add the local name of this repo into the `Section 01` of the Configuration for the repo. You will not see the local run checkbox without this in the Config, and it will fail completely if you dont had the `QA_BUDDY_LOCAL_SOURCE_ROOT` in your env file
+
+Compose bind-mounts that directory read-only at `/local-source`. Add the repository's subdirectory name to its **Local checkout path** field (for example `platform` for `/Users/you/Repositories/platform`), and a **Run against my local working tree** checkbox appears on the repository page. The saved default ref is still used for every ordinary run; the checkbox is a per-run choice and does not change it.
+
+QA Buddy builds the checkout with `git archive HEAD`, then overlays modified and untracked files and removes deleted ones, so uncommitted work is included while the source checkout is never written to. Because the file set comes from Git:
+
+- Gitignored files never reach the runner. That includes `.env`, `node_modules`, and build output. Host `node_modules` would be the wrong platform for a Linux runner anyway, so setup still installs dependencies inside the container.
+- A file you have created but not yet `git add`ed is included, because untracked files that are not ignored are copied. Files excluded by `.gitignore` are not.
+- As a second line of defence, `.env` style files and private SSH keys are removed from the checkout even if they are committed, and certificate or key material is reported in the run log. `.env.example`, `.env.sample`, `.env.template`, `.env.defaults`, and `.env.dist` are kept.
+
+Runs against a local working tree record the `HEAD` commit and are marked dirty when uncommitted changes were applied, so they are never mistaken for a reproducible run. The run history shows `local working tree` in place of the ref and appends `+dirty` to the commit.
+
+Local runs are for iterating before you push. Anything you intend to keep should still be pushed and run against its branch.
+
 ## Environment pass-through
 
 Values belong in `.env`, not in the dashboard. Add only their names to a repository's environment allowlist. The worker reads those values and passes only the selected variables into that repository's runner. Values are redacted from logs.
@@ -103,6 +134,8 @@ Compose runs two services from one image:
 
 - `server` owns the Fastify API, React dashboard, SQLite configuration, history, logs, and port `3003`.
 - `worker` claims one queued run at a time, clones the requested ref, starts a disposable runner container, streams its output, parses coverage, and cleans up.
+
+The worker also bind-mounts `QA_BUDDY_LOCAL_SOURCE_ROOT` read-only at `/local-source` when that variable is set. Runner containers never receive that mount; the worker copies the archived checkout into the disposable workspace volume instead.
 
 The worker mounts `/var/run/docker.sock`. Access to that socket is effectively host-level Docker control. QA Buddy is intentionally a trusted, local, single-user tool: do not expose it publicly and do not configure repositories you do not trust. Runner containers do not receive the Docker socket, the persistent data volume, or the GitHub clone token, but repository commands can access the network and the temporary checkout.
 

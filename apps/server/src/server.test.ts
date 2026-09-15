@@ -122,4 +122,31 @@ describe("repository API", () => {
     expect(response.body).toBe("full redacted log\n");
     expect(response.headers["content-disposition"]).toContain(`qa-buddy-run-${runId}.log`);
   });
+
+  it("rejects a local working tree run until the repository has a local checkout path", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/runs`,
+      payload: { useLocalWorkingTree: true }
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error).toContain("local checkout path");
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/repositories/${repositoryId}`,
+      payload: { ...input, localPath: "example" }
+    });
+
+    const queued = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/runs`,
+      payload: { useLocalWorkingTree: true }
+    });
+    expect(queued.statusCode).toBe(202);
+    expect(queued.json().run.useLocalWorkingTree).toBe(true);
+  });
 });

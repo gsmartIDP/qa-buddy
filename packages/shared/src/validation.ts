@@ -79,6 +79,15 @@ export const repositoryInputSchema = z
         }
       }),
     defaultRef: z.string().trim().refine(isSafeGitRef, "Enter a valid branch, tag, or commit SHA"),
+    localPath: z
+      .string()
+      .trim()
+      .refine(
+        (value) => isSafeRelativePath(value, true),
+        "Local checkout path must be relative and stay inside the mounted source directory"
+      )
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
     runnerImage: z
       .string()
       .trim()
@@ -136,6 +145,7 @@ export const repositoryInputSchema = z
 
 export const runRequestSchema = z.object({
   ref: z.string().trim().refine(isSafeGitRef, "Enter a valid branch, tag, or commit SHA").optional(),
+  useLocalWorkingTree: z.boolean().default(false),
   apps: z
     .array(z.string().trim().min(1, "App name is required").max(100))
     .min(1, "Select at least one app")

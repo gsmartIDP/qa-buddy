@@ -55,6 +55,8 @@ function repositoryFixture(): RepositoryDetail {
     repositoryId,
     requestedRef: "main",
     resolvedSha: "0123456789abcdef",
+    useLocalWorkingTree: false,
+    dirty: false,
     status: "failed" as const,
     error: "2 apps failed",
     selectedApps: null,
@@ -183,5 +185,29 @@ describe("repository app selection", () => {
     await screen.findByText("Run queued");
     const postRequest = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(String(postRequest?.[1]?.body))).toEqual({ ref: "main" });
+  });
+
+  it("hides the local working tree toggle until a checkout path is configured", async () => {
+    renderPage();
+    await screen.findByText("3 of 3 selected");
+    expect(screen.queryByRole("checkbox", { name: /local working tree/i })).toBeNull();
+  });
+
+  it("sends the local working tree flag and disables the ref input", async () => {
+    const { fetchMock, user } = renderPage({ ...repositoryFixture(), localPath: "platform" });
+    await screen.findByText("3 of 3 selected");
+
+    const toggle = screen.getByRole("checkbox", { name: /local working tree/i });
+    await user.click(toggle);
+
+    expect(screen.getByLabelText("Test branch, tag, or commit SHA").hasAttribute("disabled")).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: /Run all apps/ }));
+    await screen.findByText("Run queued");
+    const postRequest = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(postRequest?.[1]?.body))).toEqual({
+      ref: "main",
+      useLocalWorkingTree: true
+    });
   });
 });

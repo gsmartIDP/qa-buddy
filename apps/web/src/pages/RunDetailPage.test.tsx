@@ -36,6 +36,8 @@ function runFixture(status: RunStatus = "passed", selectedApps: string[] | null 
     repositoryId,
     requestedRef: "feature/coverage",
     resolvedSha: "0123456789abcdef",
+    useLocalWorkingTree: false,
+    dirty: false,
     status,
     error: null,
     selectedApps,

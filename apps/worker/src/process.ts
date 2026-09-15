@@ -23,6 +23,8 @@ export async function runProcess(options: {
   logger: RunLogger;
   timeoutMs: number;
   display?: string;
+  /** Capture stdout without echoing it into the run log. */
+  quiet?: boolean;
 }): Promise<ProcessResult> {
   const display = options.display ?? [options.command, ...options.args].join(" ");
   options.logger.line(`$ ${display}`);
@@ -45,7 +47,7 @@ export async function runProcess(options: {
     child.stdout.on("data", (chunk: Buffer) => {
       const value = chunk.toString("utf8");
       stdout += value;
-      options.logger.write(value);
+      if (!options.quiet) options.logger.write(value);
     });
     child.stderr.on("data", (chunk: Buffer) => options.logger.write(chunk.toString("utf8")));
     child.on("error", (error) => {

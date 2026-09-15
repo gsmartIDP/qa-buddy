@@ -19,6 +19,7 @@ export function RepositoryDetailPage() {
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
+  const [useLocalWorkingTree, setUseLocalWorkingTree] = useState(false);
 
   useEffect(() => {
     api<{ repository: RepositoryDetail }>(`/api/repositories/${repositoryId}`)
@@ -39,6 +40,7 @@ export function RepositoryDetailPage() {
         method: "POST",
         body: JSON.stringify({
           ref: ref.trim() || undefined,
+          useLocalWorkingTree: useLocalWorkingTree || undefined,
           apps:
             repository && selectedApps.length < repository.selectableApps.length
               ? selectedApps
@@ -117,14 +119,37 @@ export function RepositoryDetailPage() {
                 aria-label="Test branch, tag, or commit SHA"
                 placeholder={repository.defaultRef}
                 autoComplete="off"
+                disabled={useLocalWorkingTree}
               />
-              <small>Saved default: <code>{repository.defaultRef}</code></small>
+              <small>
+                {useLocalWorkingTree
+                  ? "Ignored while running against the local working tree."
+                  : <>Saved default: <code>{repository.defaultRef}</code></>}
+              </small>
             </label>
             <button className="button button-primary" disabled={running || active || (selectableApps.length > 0 && selectedApps.length === 0)}>
               <Icon name="play" size={14} />
               {running ? "Queueing…" : active ? "Run already active" : `Run ${selectedApps.length === selectableApps.length ? "all" : selectedApps.length} app${selectedApps.length === 1 ? "" : "s"} →`}
             </button>
           </div>
+          {repository.localPath && (
+            <label className="local-source-toggle">
+              <input
+                type="checkbox"
+                checked={useLocalWorkingTree}
+                onChange={(event) => setUseLocalWorkingTree(event.target.checked)}
+              />
+              <span>
+                <strong>
+                  Run against my local working tree (<code>{repository.localPath}</code>)
+                </strong>
+                <small>
+                  Archives your checkout at <code>HEAD</code> plus uncommitted changes. Gitignored files such as{" "}
+                  <code>.env</code> are never included, and the result is not reproducible from a commit alone.
+                </small>
+              </span>
+            </label>
+          )}
           {selectableApps.length > 1 && (
             <fieldset className="app-picker" aria-label="Choose applications">
               <div className="app-picker-heading">
@@ -205,7 +230,7 @@ export function RepositoryDetailPage() {
         <div className="panel-heading"><div><span className="eyebrow">Retained history</span><h2>Recent runs</h2></div><span className="muted">{repository.runs.length} retained runs</span></div>
         {repository.runs.length === 0 ? <p className="empty-copy">No runs yet. Start one above.</p> : (
           <div className="table-scroll"><table className="history-table"><thead><tr><th>Status</th><th>Ref</th><th>Commit</th><th>Apps</th><th>Started</th><th></th></tr></thead><tbody>
-            {repository.runs.map((run) => <tr key={run.id}><td><StatusBadge status={run.status} /></td><td><code>{run.requestedRef}</code></td><td><code>{run.resolvedSha?.slice(0, 8) ?? "—"}</code></td><td>{run.selectedApps ? run.selectedApps.join(", ") : "All apps"}</td><td>{formatDate(run.startedAt ?? run.createdAt)}</td><td><Link to={`/runs/${run.id}`}>Details →</Link></td></tr>)}
+            {repository.runs.map((run) => <tr key={run.id}><td><StatusBadge status={run.status} /></td><td><code>{run.useLocalWorkingTree ? "local working tree" : run.requestedRef}</code></td><td><code>{run.resolvedSha?.slice(0, 8) ?? "—"}{run.dirty ? "+dirty" : ""}</code></td><td>{run.selectedApps ? run.selectedApps.join(", ") : "All apps"}</td><td>{formatDate(run.startedAt ?? run.createdAt)}</td><td><Link to={`/runs/${run.id}`}>Details →</Link></td></tr>)}
           </tbody></table></div>
         )}
       </section>

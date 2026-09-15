@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import Docker from "dockerode";
 import { QaBuddyDatabase } from "@qa-buddy/db";
@@ -8,7 +9,12 @@ const dataDirectory = process.env.QA_BUDDY_DATA_DIR ?? path.resolve("data");
 const workspaceDirectory = process.env.QA_BUDDY_WORKSPACE_DIR ?? path.resolve("workspaces");
 const databasePath = process.env.QA_BUDDY_DATABASE_PATH ?? path.join(dataDirectory, "qa-buddy.sqlite");
 const historyLimit = Math.max(1, Number(process.env.RUN_HISTORY_LIMIT ?? 20));
+const localSourceMount = process.env.QA_BUDDY_LOCAL_SOURCE_DIR ?? "/local-source";
 const githubToken = process.env.GITHUB_TOKEN || undefined;
+// Compose always mounts something at /local-source, so the opt-in is the
+// QA_BUDDY_LOCAL_SOURCE_ROOT value in .env rather than the mount's existence.
+const localSourceDirectory =
+  process.env.QA_BUDDY_LOCAL_SOURCE_ROOT && existsSync(localSourceMount) ? localSourceMount : undefined;
 
 const database = new QaBuddyDatabase(databasePath);
 const docker = new Docker({ socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock" });
@@ -18,6 +24,7 @@ const worker = new QaBuddyWorker({
   dataDirectory,
   workspaceDirectory,
   workspaceVolume: process.env.QA_BUDDY_WORKSPACE_VOLUME ?? "qa-buddy-workspaces",
+  localSourceDirectory,
   githubToken,
   historyLimit
 });
@@ -34,6 +41,11 @@ process.on("SIGTERM", shutdown);
 try {
   console.info(githubAuthenticationMessage(githubToken));
   console.info(githubRegistryAuthenticationMessage(process.env.GITHUB_IDP_REGISTRY));
+  console.info(
+    localSourceDirectory
+      ? `Local working tree runs: enabled from ${localSourceDirectory}`
+      : "Local working tree runs: disabled; set QA_BUDDY_LOCAL_SOURCE_ROOT in .env and recreate the worker"
+  );
   await worker.run();
 } catch (error) {
   console.error(error);

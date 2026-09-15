@@ -100,6 +100,14 @@ const migrations = [
   {
     version: 5,
     sql: "ALTER TABLE repositories ADD COLUMN test_worker_limit INTEGER NOT NULL DEFAULT 2;"
+  },
+  {
+    version: 6,
+    sql: `
+      ALTER TABLE repositories ADD COLUMN local_path TEXT;
+      ALTER TABLE runs ADD COLUMN use_local_working_tree INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE runs ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0;
+    `
   }
 ] as const;
 
@@ -108,6 +116,7 @@ interface RepositoryRow {
   name: string;
   github_url: string;
   default_ref: string;
+  local_path: string | null;
   runner_image: string;
   setup_command: string | null;
   build_command: string | null;
@@ -135,6 +144,8 @@ interface RunRow {
   repository_id: string;
   requested_ref: string;
   resolved_sha: string | null;
+  use_local_working_tree: number;
+  dirty: number;
   status: RunStatus;
   error: string | null;
   configuration_snapshot_json: string;
@@ -267,6 +278,8 @@ export class QaBuddyDatabase {
       repositoryId: row.repository_id,
       requestedRef: row.requested_ref,
       resolvedSha: row.resolved_sha,
+      useLocalWorkingTree: row.use_local_working_tree === 1,
+      dirty: row.dirty === 1,
       status: row.status,
       error: row.error,
       selectedApps: configurationSnapshot.selectedApps,
@@ -296,6 +309,7 @@ export class QaBuddyDatabase {
       name: row.name,
       githubUrl: row.github_url,
       defaultRef: row.default_ref,
+      localPath: row.local_path ?? undefined,
       runnerImage: row.runner_image,
       setupCommand: row.setup_command ?? undefined,
       buildCommand: row.build_command ?? undefined,
@@ -315,6 +329,7 @@ export class QaBuddyDatabase {
       name: repository.name,
       githubUrl: repository.githubUrl,
       defaultRef: repository.defaultRef,
+      localPath: repository.localPath,
       runnerImage: repository.runnerImage,
       setupCommand: repository.setupCommand,
       buildCommand: repository.buildCommand,
@@ -367,15 +382,16 @@ export class QaBuddyDatabase {
       this.connection
         .prepare(`
           INSERT INTO repositories(
-            id, name, github_url, default_ref, runner_image, setup_command,
+            id, name, github_url, default_ref, local_path, runner_image, setup_command,
             build_command, test_worker_limit, timeout_minutes, environment_allowlist_json, auto_detect, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
           input.name,
           input.githubUrl,
           input.defaultRef,
+          input.localPath || null,
           input.runnerImage,
           input.setupCommand || null,
           input.buildCommand || null,
@@ -398,7 +414,7 @@ export class QaBuddyDatabase {
       this.connection
         .prepare(`
           UPDATE repositories SET
-            name = ?, github_url = ?, default_ref = ?, runner_image = ?, setup_command = ?,
+            name = ?, github_url = ?, default_ref = ?, local_path = ?, runner_image = ?, setup_command = ?,
             build_command = ?, test_worker_limit = ?, timeout_minutes = ?, environment_allowlist_json = ?, auto_detect = ?, updated_at = ?
           WHERE id = ?
         `)
@@ -406,6 +422,7 @@ export class QaBuddyDatabase {
           input.name,
           input.githubUrl,
           input.defaultRef,
+          input.localPath || null,
           input.runnerImage,
           input.setupCommand || null,
           input.buildCommand || null,
@@ -458,9 +475,17 @@ export class QaBuddyDatabase {
     return { deleted: result.changes > 0, active: false, runIds };
   }
 
-  createRun(repositoryId: string, requestedRef?: string, selectedApps?: string[]): RunDetail {
+  createRun(
+    repositoryId: string,
+    requestedRef?: string,
+    selectedApps?: string[],
+    useLocalWorkingTree = false
+  ): RunDetail {
     const repository = this.getRepository(repositoryId);
     if (!repository) throw new Error("Repository not found");
+    if (useLocalWorkingTree && !repository.localPath) {
+      throw new Error("This repository has no local checkout path configured");
+    }
 
     const runId = randomUUID();
     const timestamp = now();
@@ -500,10 +525,17 @@ export class QaBuddyDatabase {
       this.connection
         .prepare(`
           INSERT INTO runs(
-            id, repository_id, requested_ref, status, configuration_snapshot_json, created_at
-          ) VALUES (?, ?, ?, 'queued', ?, ?)
+            id, repository_id, requested_ref, use_local_working_tree, status, configuration_snapshot_json, created_at
+          ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
         `)
-        .run(runId, repositoryId, ref, JSON.stringify(snapshot), timestamp);
+        .run(
+          runId,
+          repositoryId,
+          ref,
+          useLocalWorkingTree ? 1 : 0,
+          JSON.stringify(snapshot),
+          timestamp
+        );
 
       const appStatement = this.connection.prepare(`
         INSERT INTO app_runs(
@@ -560,6 +592,7 @@ export class QaBuddyDatabase {
       status?: RunStatus;
       resolvedSha?: string | null;
       error?: string | null;
+      dirty?: boolean;
       finished?: boolean;
     }
   ): void {
@@ -567,12 +600,13 @@ export class QaBuddyDatabase {
     if (!current) return;
     this.connection
       .prepare(`
-        UPDATE runs SET status = ?, resolved_sha = ?, error = ?, finished_at = ? WHERE id = ?
+        UPDATE runs SET status = ?, resolved_sha = ?, error = ?, dirty = ?, finished_at = ? WHERE id = ?
       `)
       .run(
         values.status ?? current.status,
         values.resolvedSha === undefined ? current.resolvedSha : values.resolvedSha,
         values.error === undefined ? current.error : values.error,
+        (values.dirty === undefined ? current.dirty : values.dirty) ? 1 : 0,
         values.finished ? now() : current.finishedAt,
         id
       );

@@ -191,4 +191,29 @@ describe("QaBuddyDatabase", () => {
     database.createRun(repository.id);
     expect(database.deleteRepository(repository.id)).toMatchObject({ deleted: false, active: true });
   });
+
+  it("records local working tree runs and refuses them without a configured checkout path", () => {
+    const remoteOnly = database.createRepository(input);
+    expect(() => database.createRun(remoteOnly.id, "main", undefined, true)).toThrow(
+      "no local checkout path configured"
+    );
+    expect(database.createRun(remoteOnly.id, "main").useLocalWorkingTree).toBe(false);
+
+    const local = database.createRepository({
+      ...input,
+      name: "Local platform",
+      githubUrl: "https://github.com/example/local.git",
+      localPath: "platform"
+    });
+    expect(database.getRepository(local.id)?.localPath).toBe("platform");
+
+    const run = database.createRun(local.id, "main", undefined, true);
+    expect(run.useLocalWorkingTree).toBe(true);
+    expect(run.dirty).toBe(false);
+    expect(run.configurationSnapshot.localPath).toBe("platform");
+
+    database.updateRun(run.id, { resolvedSha: "abc123", dirty: true });
+    expect(database.getRun(run.id)?.dirty).toBe(true);
+    expect(database.getRun(run.id)?.resolvedSha).toBe("abc123");
+  });
 });

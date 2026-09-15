@@ -16,6 +16,7 @@ const initialValue: RepositoryInput = {
   name: "",
   githubUrl: "",
   defaultRef: "main",
+  localPath: undefined,
   runnerImage: "node:22-bookworm",
   setupCommand: "npm ci",
   buildCommand: undefined,
@@ -43,6 +44,7 @@ export function RepositoryFormPage() {
           name: repository.name,
           githubUrl: repository.githubUrl,
           defaultRef: repository.defaultRef,
+          localPath: repository.localPath,
           runnerImage: repository.runnerImage,
           setupCommand: repository.setupCommand,
           buildCommand: repository.buildCommand,
@@ -152,6 +154,20 @@ export function RepositoryFormPage() {
               <small>
                 Private repository? Put a read-only fine-grained token in <code>.env</code> as{" "}
                 <code>GITHUB_TOKEN</code>, then recreate the worker. Tokens are never entered or stored here.
+              </small>
+            </label>
+            <label className="field-span">
+              <span>Local checkout path (optional)</span>
+              <input
+                value={value.localPath ?? ""}
+                onChange={(event) => setValue({ ...value, localPath: event.target.value || undefined })}
+                placeholder="my-monorepo"
+                autoComplete="off"
+              />
+              <small>
+                Relative to <code>QA_BUDDY_LOCAL_SOURCE_ROOT</code> in <code>.env</code>. Set both to run this
+                repository against your own working tree, including uncommitted changes. Gitignored files such as{" "}
+                <code>.env</code> and <code>node_modules</code> are never copied into the runner.
               </small>
             </label>
           </div>

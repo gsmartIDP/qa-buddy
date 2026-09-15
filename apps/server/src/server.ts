@@ -120,8 +120,18 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
           return reply.code(400).send({ error: `Unknown app selection: ${missing.join(", ")}` });
         }
       }
+      if (parsed.data.useLocalWorkingTree && !repository.localPath) {
+        return reply.code(400).send({
+          error: "Add a local checkout path to this repository before running against the local working tree"
+        });
+      }
       try {
-        const run = database.createRun(request.params.repositoryId, parsed.data.ref, parsed.data.apps);
+        const run = database.createRun(
+          request.params.repositoryId,
+          parsed.data.ref,
+          parsed.data.apps,
+          parsed.data.useLocalWorkingTree
+        );
         return reply.code(202).send({ run });
       } catch (error) {
         if (error instanceof Error && error.message.includes("already has")) {
