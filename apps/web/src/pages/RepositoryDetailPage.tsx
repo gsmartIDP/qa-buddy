@@ -1,5 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { activeRunStatuses, type RepositoryDetail, type RunDetail, type RunSummary } from "@qa-buddy/shared";
+import {
+  activeRunStatuses,
+  shortAppName,
+  type AppGroup,
+  type RepositoryDetail,
+  type RunDetail,
+  type RunSummary
+} from "@qa-buddy/shared";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { CoverageTable } from "../components/CoverageTable";
@@ -21,6 +28,11 @@ export function RepositoryDetailPage() {
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const [useLocalWorkingTree, setUseLocalWorkingTree] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [appFilter, setAppFilter] = useState("");
+  const [namingGroup, setNamingGroup] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [appliedGroupId, setAppliedGroupId] = useState<string | null>(null);
+  const [groupBusy, setGroupBusy] = useState(false);
 
   useEffect(() => {
     api<{ repository: RepositoryDetail }>(`/api/repositories/${repositoryId}`)
@@ -58,6 +70,69 @@ export function RepositoryDetailPage() {
       setError(caught instanceof Error ? caught.message : "Unable to stop this run");
     } finally {
       setStopping(false);
+    }
+  };
+
+
+  const refreshRepository = async (): Promise<void> => {
+    const { repository: result } = await api<{ repository: RepositoryDetail }>(
+      `/api/repositories/${repositoryId}`
+    );
+    setRepository(result);
+  };
+
+  const saveGroup = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!groupName.trim()) return;
+    setGroupBusy(true);
+    setError("");
+    try {
+      const { appGroup } = await api<{ appGroup: AppGroup }>(
+        `/api/repositories/${repositoryId}/app-groups`,
+        { method: "POST", body: JSON.stringify({ name: groupName.trim(), appNames: selectedApps }) }
+      );
+      await refreshRepository();
+      setAppliedGroupId(appGroup.id);
+      setNamingGroup(false);
+      setGroupName("");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to save the group");
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const updateGroup = async (group: AppGroup, changes: { name?: string; appNames?: string[] }) => {
+    setGroupBusy(true);
+    setError("");
+    try {
+      await api(`/api/app-groups/${group.id}`, { method: "PATCH", body: JSON.stringify(changes) });
+      await refreshRepository();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to update the group");
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const renameGroup = async (group: AppGroup) => {
+    const name = window.prompt(`Rename "${group.name}" to:`, group.name);
+    if (!name || name.trim() === group.name) return;
+    await updateGroup(group, { name: name.trim() });
+  };
+
+  const deleteGroup = async (group: AppGroup) => {
+    if (!window.confirm(`Delete the group "${group.name}"? The applications themselves are not affected.`)) return;
+    setGroupBusy(true);
+    setError("");
+    try {
+      await api(`/api/app-groups/${group.id}`, { method: "DELETE" });
+      if (appliedGroupId === group.id) setAppliedGroupId(null);
+      await refreshRepository();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to delete the group");
+    } finally {
+      setGroupBusy(false);
     }
   };
 
@@ -107,6 +182,35 @@ export function RepositoryDetailPage() {
   };
   const selectFailedApps = () => {
     setSelectedApps(selectableApps.filter((app) => latestStatus.get(app.name) === "failed").map((app) => app.name));
+  };
+
+  const selectableNames = new Set(selectableApps.map((app) => app.name));
+  const filterTerm = appFilter.trim().toLocaleLowerCase();
+  // Matching the working directory as well as the name matters here: package
+  // names share a scope prefix, so the path is often the distinguishing part.
+  const visibleApps = filterTerm
+    ? selectableApps.filter(
+        (app) =>
+          app.name.toLocaleLowerCase().includes(filterTerm) ||
+          app.workingDirectory.toLocaleLowerCase().includes(filterTerm)
+      )
+    : selectableApps;
+  const visibleNames = new Set(visibleApps.map((app) => app.name));
+  const hiddenSelectedCount = selectedApps.filter((name) => !visibleNames.has(name)).length;
+
+  /** A group only ever selects apps that still exist in this repository. */
+  const resolveGroup = (group: AppGroup): string[] =>
+    group.appNames.filter((name) => selectableNames.has(name));
+  const sameSelection = (left: string[], right: string[]): boolean =>
+    left.length === right.length && left.every((name) => right.includes(name));
+  const appliedGroup = repository.appGroups.find((group) => group.id === appliedGroupId) ?? null;
+  const appliedGroupDrifted = Boolean(
+    appliedGroup && !sameSelection(resolveGroup(appliedGroup), selectedApps)
+  );
+
+  const applyGroup = (group: AppGroup) => {
+    setSelectedApps(resolveGroup(group));
+    setAppliedGroupId(group.id);
   };
 
   return (
@@ -198,20 +302,157 @@ export function RepositoryDetailPage() {
               <div className="app-picker-heading">
                 <strong>Choose applications</strong>
                 <span>{selectedApps.length} of {selectableApps.length} selected</span>
-                <button type="button" className="text-button" onClick={() => setSelectedApps(selectableApps.map((app) => app.name))}>Select all</button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() =>
+                    setSelectedApps((current) =>
+                      Array.from(new Set([...current, ...visibleApps.map((app) => app.name)]))
+                    )
+                  }
+                >
+                  {filterTerm ? `Select all ${visibleApps.length} matching` : "Select all"}
+                </button>
                 <button type="button" className="text-button" onClick={() => setSelectedApps([])}>Unselect all</button>
                 {[...latestStatus.values()].some((status) => status === "failed") && (
                   <button type="button" className="text-button danger" onClick={selectFailedApps}>Select failed</button>
                 )}
               </div>
+
+              {repository.appGroups.length > 0 && (
+                <div className="app-group-row">
+                  <span className="app-group-label">Groups</span>
+                  {repository.appGroups.map((group) => {
+                    const resolved = resolveGroup(group);
+                    const missing = group.appNames.length - resolved.length;
+                    const isApplied = group.id === appliedGroupId;
+                    return (
+                      <span key={group.id} className={isApplied ? "app-group-chip applied" : "app-group-chip"}>
+                        <button type="button" className="app-group-apply" onClick={() => applyGroup(group)}>
+                          {group.name}
+                          <small>
+                            {resolved.length} app{resolved.length === 1 ? "" : "s"}
+                            {missing > 0 ? ` · ${missing} no longer detected` : ""}
+                          </small>
+                        </button>
+                        {isApplied && appliedGroupDrifted && (
+                          <button
+                            type="button"
+                            className="text-button app-group-action"
+                            disabled={groupBusy || selectedApps.length === 0}
+                            title="Replace this group's apps with the current selection"
+                            onClick={() => updateGroup(group, { appNames: selectedApps })}
+                          >
+                            Update
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="text-button app-group-action"
+                          disabled={groupBusy}
+                          onClick={() => renameGroup(group)}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="text-button danger app-group-action"
+                          disabled={groupBusy}
+                          onClick={() => deleteGroup(group)}
+                        >
+                          Delete
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="app-picker-tools">
+                <input
+                  type="search"
+                  className="app-filter"
+                  value={appFilter}
+                  onChange={(event) => setAppFilter(event.target.value)}
+                  placeholder="Filter by name or path, for example libs/ or riverside"
+                  aria-label="Filter applications"
+                  autoComplete="off"
+                />
+                {namingGroup ? (
+                  <span className="app-group-save">
+                    <input
+                      value={groupName}
+                      onChange={(event) => setGroupName(event.target.value)}
+                      placeholder="Group name"
+                      aria-label="Group name"
+                      autoComplete="off"
+                      autoFocus
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setNamingGroup(false);
+                          setGroupName("");
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="button button-secondary button-small"
+                      disabled={groupBusy || !groupName.trim()}
+                      onClick={saveGroup}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => {
+                        setNamingGroup(false);
+                        setGroupName("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={selectedApps.length === 0}
+                    title={
+                      selectedApps.length === 0
+                        ? "Select the applications you want to save first"
+                        : "Save the current selection as a reusable group"
+                    }
+                    onClick={() => setNamingGroup(true)}
+                  >
+                    Save selection as group
+                  </button>
+                )}
+              </div>
+              {namingGroup && (
+                <p className="app-group-hint">
+                  Naming {selectedApps.length} app{selectedApps.length === 1 ? "" : "s"}:{" "}
+                  {selectedApps.map((name) => shortAppName(name)).join(", ")}
+                </p>
+              )}
+              {hiddenSelectedCount > 0 && (
+                <p className="app-picker-warning">
+                  {hiddenSelectedCount} selected app{hiddenSelectedCount === 1 ? " is" : "s are"} hidden by the
+                  current filter and will still run.
+                </p>
+              )}
+
               <div className="app-picker-grid">
-                {selectableApps.map((app) => (
+                {visibleApps.map((app) => (
                   <label key={app.name} className="app-picker-option">
                     <input type="checkbox" checked={selectedApps.includes(app.name)} onChange={() => toggleApp(app.name)} />
-                    <span><strong>{app.name}</strong><small>{app.workingDirectory}{latestStatus.get(app.name) ? ` · ${latestStatus.get(app.name)}` : ""}</small></span>
+                    <span><strong>{shortAppName(app.name)}</strong><small>{app.workingDirectory}{latestStatus.get(app.name) ? ` · ${latestStatus.get(app.name)}` : ""}</small></span>
                   </label>
                 ))}
               </div>
+              {visibleApps.length === 0 && (
+                <p className="empty-copy">No applications match this filter.</p>
+              )}
             </fieldset>
           )}
           {repository.autoDetect && selectableApps.length === 0 && (

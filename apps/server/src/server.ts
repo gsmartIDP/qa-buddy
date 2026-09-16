@@ -4,6 +4,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { QaBuddyDatabase } from "@qa-buddy/db";
 import {
+  appGroupInputSchema,
+  appGroupPatchSchema,
   coverageFileQuerySchema,
   repositoryInputSchema,
   runRequestSchema,
@@ -147,6 +149,63 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
     }
   );
 
+
+
+  app.get<{ Params: { repositoryId: string } }>(
+    "/api/repositories/:repositoryId/app-groups",
+    async (request, reply) => {
+      if (!database.getRepository(request.params.repositoryId)) {
+        return reply.code(404).send({ error: "Repository not found" });
+      }
+      return { appGroups: database.listAppGroups(request.params.repositoryId) };
+    }
+  );
+
+  app.post<{ Params: { repositoryId: string } }>(
+    "/api/repositories/:repositoryId/app-groups",
+    async (request, reply) => {
+      if (!database.getRepository(request.params.repositoryId)) {
+        return reply.code(404).send({ error: "Repository not found" });
+      }
+      const parsed = appGroupInputSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: issueMessage(parsed.error) });
+      }
+      try {
+        const appGroup = database.createAppGroup(request.params.repositoryId, parsed.data);
+        return reply.code(201).send({ appGroup });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("already exists")) {
+          return reply.code(409).send({ error: error.message });
+        }
+        throw error;
+      }
+    }
+  );
+
+  app.patch<{ Params: { groupId: string } }>("/api/app-groups/:groupId", async (request, reply) => {
+    const parsed = appGroupPatchSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: issueMessage(parsed.error) });
+    }
+    try {
+      const appGroup = database.updateAppGroup(request.params.groupId, parsed.data);
+      if (!appGroup) return reply.code(404).send({ error: "Group not found" });
+      return { appGroup };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("already exists")) {
+        return reply.code(409).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.delete<{ Params: { groupId: string } }>("/api/app-groups/:groupId", async (request, reply) => {
+    if (!database.deleteAppGroup(request.params.groupId)) {
+      return reply.code(404).send({ error: "Group not found" });
+    }
+    return reply.code(204).send();
+  });
 
   app.get<{ Params: { repositoryId: string } }>(
     "/api/repositories/:repositoryId/coverage",

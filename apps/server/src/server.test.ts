@@ -228,4 +228,50 @@ describe("repository API", () => {
     expect(response.json().run.cancelRequested).toBe(true);
     expect(response.json().run.status).toBe("cloning");
   });
+
+  it("manages application groups and rejects duplicate names", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+
+    const empty = await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}/app-groups` });
+    expect(empty.json().appGroups).toEqual([]);
+
+    const saved = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/app-groups`,
+      payload: { name: "Nightly", appNames: ["App"] }
+    });
+    expect(saved.statusCode).toBe(201);
+    const groupId = saved.json().appGroup.id as string;
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/app-groups`,
+      payload: { name: "nightly", appNames: ["App"] }
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const empties = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/app-groups`,
+      payload: { name: "Empty", appNames: [] }
+    });
+    expect(empties.statusCode).toBe(400);
+
+    const renamed = await app.inject({
+      method: "PATCH",
+      url: `/api/app-groups/${groupId}`,
+      payload: { name: "Nightly smoke" }
+    });
+    expect(renamed.json().appGroup.name).toBe("Nightly smoke");
+    expect(renamed.json().appGroup.appNames).toEqual(["App"]);
+
+    const detail = await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}` });
+    expect(detail.json().repository.appGroups).toHaveLength(1);
+
+    const removed = await app.inject({ method: "DELETE", url: `/api/app-groups/${groupId}` });
+    expect(removed.statusCode).toBe(204);
+    const missing = await app.inject({ method: "PATCH", url: `/api/app-groups/${groupId}`, payload: { name: "X" } });
+    expect(missing.statusCode).toBe(404);
+  });
 });

@@ -93,6 +93,17 @@ A run passes only when every app test exits successfully and every configured co
 
 From the repository detail page, a multi-app run can target any subset of the configured or most recently detected apps. Use **Select failed** to quickly rerun only applications that failed the latest run. The selected app names are retained with the run, and auto-detected selections are checked again after cloning the requested ref. Run all apps once before using per-app selection on a newly configured auto-detected repository.
 
+### Filtering and saved groups
+
+The application picker filters on both the package name and the working directory, so `libs/` narrows to shared libraries and `riverside` finds a family of apps whatever their scope prefix. While a filter is active, **Select all** applies only to the visible matches, and any selected application hidden by the filter is called out so nothing runs unseen. The picker shows the short package name; results views keep the full name so the owning repository stays clear.
+
+Save a selection you use often with **Save selection as group**, name it, and apply it later in one click. Groups:
+
+- Are explicit lists of application names, scoped to one repository, with unique names. They never update themselves, so a saved group keeps producing the same set of results as the repository grows.
+- Replace the current selection when applied rather than adding to it.
+- Select only applications that still exist. A group whose apps have been renamed or removed shows how many are no longer detected and applies the rest, so a stale entry cannot fail a run.
+- Show an **Update** action once the current selection has drifted from the applied group, which re-points the group at what is selected now. Rename and delete are available on each group.
+
 The app results table shows how long each application took, rounded to the nearest second, alongside a breakdown of the run total into app time and the checkout, setup, and build phases. This makes it obvious when a single workspace dominates a run.
 
 The run detail page provides an expandable test-case readout for auto-detected Jest and Vitest apps. It records test names, source test files, durations, statuses, and bounded failure messages. For a manually configured command, QA Buddy will also consume a Jest-compatible JSON report written to `.qa-buddy-test-results.json` in the app working directory. Other test runners continue to use the full redacted log as their detailed readout.
@@ -195,6 +206,8 @@ Useful endpoints:
 
 - `GET /api/health`
 - `GET|POST /api/repositories`
+- `GET|POST /api/repositories/:repositoryId/app-groups`
+- `PATCH|DELETE /api/app-groups/:groupId`
 - `GET|PATCH|DELETE /api/repositories/:repositoryId`
 - `POST /api/repositories/:repositoryId/runs`
 - `GET /api/repositories/:repositoryId/runs`

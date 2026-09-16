@@ -89,6 +89,7 @@ function repositoryFixture(): RepositoryDetail {
     updatedAt: "2026-09-09T11:00:00.000Z",
     latestRun: previousRun,
     selectableApps,
+    appGroups: [],
     runs: [previousRun]
   };
 }
@@ -242,5 +243,113 @@ describe("repository app selection", () => {
     renderPage();
     await screen.findByText("3 of 3 selected");
     expect(screen.queryByRole("button", { name: /Stop run/ })).toBeNull();
+  });
+
+  const groupFixture = (appNames: string[], name = "Nightly") => ({
+    id: "group-1",
+    repositoryId,
+    name,
+    appNames,
+    createdAt: "2026-09-09T12:00:00.000Z",
+    updatedAt: "2026-09-09T12:00:00.000Z"
+  });
+
+  it("filters applications by name and by working directory", async () => {
+    const { user } = renderPage();
+    await screen.findByText("3 of 3 selected");
+
+    const filter = screen.getByLabelText("Filter applications");
+    await user.type(filter, "worker");
+    expect(screen.getByRole("checkbox", { name: /Worker/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /^API/ })).toBeNull();
+
+    await user.clear(filter);
+    // The path is often the distinguishing part, so it matches too.
+    await user.type(filter, "apps/web");
+    expect(screen.getByRole("checkbox", { name: /Web/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: /Worker/ })).toBeNull();
+  });
+
+  it("warns when a filter hides applications that are still selected", async () => {
+    const { user } = renderPage();
+    await screen.findByText("3 of 3 selected");
+
+    await user.type(screen.getByLabelText("Filter applications"), "worker");
+
+    expect(screen.getByText(/2 selected apps are hidden by the current filter/)).toBeTruthy();
+    // The true total is still reported, so nothing runs invisibly.
+    expect(screen.getByText("3 of 3 selected")).toBeTruthy();
+  });
+
+  it("limits select all to the visible matches while a filter is active", async () => {
+    const { user } = renderPage();
+    await screen.findByText("3 of 3 selected");
+    await user.click(screen.getByRole("button", { name: "Unselect all" }));
+
+    await user.type(screen.getByLabelText("Filter applications"), "worker");
+    await user.click(screen.getByRole("button", { name: /Select all 1 matching/ }));
+
+    expect(screen.getByText("1 of 3 selected")).toBeTruthy();
+  });
+
+  it("applies a saved group, replacing the current selection", async () => {
+    const repository = { ...repositoryFixture(), appGroups: [groupFixture(["API", "Web"])] };
+    const { user } = renderPage(repository);
+    await screen.findByText("3 of 3 selected");
+
+    await user.click(screen.getByRole("button", { name: /Nightly/ }));
+
+    expect(screen.getByText("2 of 3 selected")).toBeTruthy();
+    const checked = screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked);
+    expect(checked).toHaveLength(2);
+  });
+
+  it("selects only the apps in a group that still exist and says how many are gone", async () => {
+    const repository = {
+      ...repositoryFixture(),
+      appGroups: [groupFixture(["API", "Retired", "Also retired"])]
+    };
+    const { user } = renderPage(repository);
+    await screen.findByText("3 of 3 selected");
+
+    expect(screen.getByText(/2 no longer detected/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Nightly/ }));
+
+    // A stale name must never reach the API, which rejects unknown selections.
+    expect(screen.getByText("1 of 3 selected")).toBeTruthy();
+  });
+
+  it("saves the current selection as a named group", async () => {
+    const { fetchMock, user } = renderPage();
+    await screen.findByText("3 of 3 selected");
+    await user.click(screen.getByRole("button", { name: "Unselect all" }));
+    await user.click(screen.getByRole("checkbox", { name: /Worker/ }));
+
+    await user.click(screen.getByRole("button", { name: /Save selection as group/ }));
+    await user.type(screen.getByLabelText("Group name"), "Nightly smoke");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/app-groups") && init?.method === "POST"
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+        name: "Nightly smoke",
+        appNames: ["Worker"]
+      });
+    });
+  });
+
+  it("offers to update a group only once the selection has drifted from it", async () => {
+    const repository = { ...repositoryFixture(), appGroups: [groupFixture(["API", "Web"])] };
+    const { user } = renderPage(repository);
+    await screen.findByText("3 of 3 selected");
+
+    await user.click(screen.getByRole("button", { name: /Nightly/ }));
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+
+    await user.click(screen.getByRole("checkbox", { name: /Worker/ }));
+    expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
   });
 });

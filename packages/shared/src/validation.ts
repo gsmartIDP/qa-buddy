@@ -199,3 +199,29 @@ export const coverageFileQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1_000).optional(),
   offset: z.coerce.number().int().min(0).optional()
 });
+
+const appGroupName = z.string().trim().min(1, "Group name is required").max(60);
+const appGroupAppNames = z
+  .array(z.string().trim().min(1).max(200))
+  .min(1, "Select at least one app before saving a group")
+  .max(200)
+  .refine(
+    (names) => new Set(names.map((name) => name.toLocaleLowerCase())).size === names.length,
+    "App names in a group must be unique"
+  );
+
+export const appGroupInputSchema = z.object({
+  name: appGroupName,
+  appNames: appGroupAppNames
+});
+
+/** Rename a group, replace its apps, or both. */
+export const appGroupPatchSchema = z
+  .object({
+    name: appGroupName.optional(),
+    appNames: appGroupAppNames.optional()
+  })
+  .refine(
+    (value) => value.name !== undefined || value.appNames !== undefined,
+    "Provide a new name, a new app selection, or both"
+  );

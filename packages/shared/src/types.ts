@@ -221,9 +221,39 @@ export interface Repository {
   latestRun: RunSummary | null;
 }
 
+/**
+ * A saved, explicit selection of applications for one repository. Groups store
+ * app names rather than ids because auto-detected apps have no stable rows.
+ */
+export interface AppGroup {
+  id: string;
+  repositoryId: string;
+  name: string;
+  appNames: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppGroupInput {
+  name: string;
+  appNames: string[];
+}
+
 export interface RepositoryDetail extends Repository {
   selectableApps: AppInput[];
+  appGroups: AppGroup[];
   runs: RunSummary[];
+}
+
+/**
+ * Display form for the run-trigger picker, where space is tight and the
+ * working directory is shown alongside. Results views keep the full name so the
+ * owning repository stays visible.
+ */
+export function shortAppName(name: string): string {
+  const trimmed = name.trim();
+  const lastSegment = trimmed.slice(trimmed.lastIndexOf("/") + 1);
+  return lastSegment || trimmed;
 }
 
 export const activeRunStatuses: RunStatus[] = [

@@ -391,4 +391,52 @@ describe("QaBuddyDatabase", () => {
     expect(database.requestRunCancellation("missing-run")).toBe("not_found");
     expect(database.getRun(run.id)?.status).toBe("passed");
   });
+
+  it("saves, renames, re-points, and deletes application groups", () => {
+    const repository = database.createRepository(input);
+
+    const group = database.createAppGroup(repository.id, {
+      name: "Riverside set",
+      appNames: ["@idplans-platform/riverside", "@idplans-platform/riverside-api"]
+    });
+    expect(group.appNames).toHaveLength(2);
+    expect(database.getRepositoryDetail(repository.id)?.appGroups).toHaveLength(1);
+
+    const renamed = database.updateAppGroup(group.id, { name: "Riverside" });
+    expect(renamed?.name).toBe("Riverside");
+    expect(renamed?.appNames).toEqual(group.appNames);
+
+    const repointed = database.updateAppGroup(group.id, { appNames: ["@idplans-platform/scout"] });
+    expect(repointed?.name).toBe("Riverside");
+    expect(repointed?.appNames).toEqual(["@idplans-platform/scout"]);
+
+    expect(database.deleteAppGroup(group.id)).toBe(true);
+    expect(database.listAppGroups(repository.id)).toEqual([]);
+    expect(database.deleteAppGroup(group.id)).toBe(false);
+  });
+
+  it("keeps group names unique per repository but allows reuse across them", () => {
+    const first = database.createRepository(input);
+    const second = database.createRepository({
+      ...input,
+      name: "Second",
+      githubUrl: "https://github.com/example/second.git"
+    });
+
+    database.createAppGroup(first.id, { name: "Nightly", appNames: ["Web"] });
+    expect(() => database.createAppGroup(first.id, { name: "nightly", appNames: ["API"] })).toThrow(
+      "already exists"
+    );
+    expect(() => database.createAppGroup(second.id, { name: "Nightly", appNames: ["Web"] })).not.toThrow();
+
+    const other = database.createAppGroup(first.id, { name: "Weekly", appNames: ["API"] });
+    expect(() => database.updateAppGroup(other.id, { name: "Nightly" })).toThrow("already exists");
+  });
+
+  it("removes groups when the repository is deleted", () => {
+    const repository = database.createRepository(input);
+    database.createAppGroup(repository.id, { name: "Nightly", appNames: ["Web"] });
+    database.deleteRepository(repository.id);
+    expect(database.listAppGroups(repository.id)).toEqual([]);
+  });
 });

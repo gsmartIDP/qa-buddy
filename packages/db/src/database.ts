@@ -4,6 +4,8 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type {
   AppConfiguration,
+  AppGroup,
+  AppGroupInput,
   AppRun,
   AppRunStatus,
   CoverageFileEntry,
@@ -158,6 +160,22 @@ const migrations = [
   {
     version: 9,
     sql: "ALTER TABLE repositories ADD COLUMN additional_workspaces_json TEXT NOT NULL DEFAULT '[]';"
+  },
+  {
+    version: 10,
+    sql: `
+      CREATE TABLE app_groups (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        app_names_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(repository_id, name COLLATE NOCASE)
+      );
+
+      CREATE INDEX app_groups_repository_idx ON app_groups(repository_id, name COLLATE NOCASE);
+    `
   }
 ] as const;
 
@@ -223,6 +241,15 @@ interface AppRunRow {
   test_results_error: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+interface AppGroupRow {
+  id: string;
+  repository_id: string;
+  name: string;
+  app_names_json: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface CoverageSnapshotRow {
@@ -443,7 +470,12 @@ export class QaBuddyDatabase {
     const selectableApps = repository.autoDetect
       ? this.latestDetectedApps(id)
       : this.repositoryInput(repository).apps;
-    return { ...repository, selectableApps, runs: this.listRuns(id, runLimit) };
+    return {
+      ...repository,
+      selectableApps,
+      appGroups: this.listAppGroups(id),
+      runs: this.listRuns(id, runLimit)
+    };
   }
 
   private latestDetectedApps(repositoryId: string): RepositoryInput["apps"] {
@@ -670,6 +702,78 @@ export class QaBuddyDatabase {
     return id ? this.getRun(id) : null;
   }
 
+
+
+  // ----- Saved application groups ----------------------------------------------------
+
+  private mapAppGroup(row: AppGroupRow): AppGroup {
+    return {
+      id: row.id,
+      repositoryId: row.repository_id,
+      name: row.name,
+      appNames: JSON.parse(row.app_names_json) as string[],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  listAppGroups(repositoryId: string): AppGroup[] {
+    const rows = this.connection
+      .prepare("SELECT * FROM app_groups WHERE repository_id = ? ORDER BY name COLLATE NOCASE ASC")
+      .all(repositoryId) as AppGroupRow[];
+    return rows.map((row) => this.mapAppGroup(row));
+  }
+
+  getAppGroup(id: string): AppGroup | null {
+    const row = this.connection.prepare("SELECT * FROM app_groups WHERE id = ?").get(id) as
+      | AppGroupRow
+      | undefined;
+    return row ? this.mapAppGroup(row) : null;
+  }
+
+  createAppGroup(repositoryId: string, input: AppGroupInput): AppGroup {
+    const id = randomUUID();
+    const timestamp = now();
+    try {
+      this.connection
+        .prepare(`
+          INSERT INTO app_groups(id, repository_id, name, app_names_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .run(id, repositoryId, input.name, JSON.stringify(input.appNames), timestamp, timestamp);
+    } catch (error) {
+      throw this.appGroupNameConflict(error, input.name);
+    }
+    return this.getAppGroup(id)!;
+  }
+
+  /** Renames a group, replaces its apps, or both. */
+  updateAppGroup(id: string, input: Partial<AppGroupInput>): AppGroup | null {
+    const current = this.getAppGroup(id);
+    if (!current) return null;
+    const name = input.name ?? current.name;
+    const appNames = input.appNames ?? current.appNames;
+    try {
+      this.connection
+        .prepare("UPDATE app_groups SET name = ?, app_names_json = ?, updated_at = ? WHERE id = ?")
+        .run(name, JSON.stringify(appNames), now(), id);
+    } catch (error) {
+      throw this.appGroupNameConflict(error, name);
+    }
+    return this.getAppGroup(id);
+  }
+
+  deleteAppGroup(id: string): boolean {
+    return this.connection.prepare("DELETE FROM app_groups WHERE id = ?").run(id).changes > 0;
+  }
+
+  private appGroupNameConflict(error: unknown, name: string): Error {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("UNIQUE") && message.includes("app_groups")) {
+      return new Error(`A group named "${name}" already exists for this repository`);
+    }
+    return error instanceof Error ? error : new Error("Unable to save the group");
+  }
 
   // ----- Per-file coverage snapshots -------------------------------------------------
 
