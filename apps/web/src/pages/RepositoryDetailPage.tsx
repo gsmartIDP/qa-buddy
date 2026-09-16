@@ -142,7 +142,7 @@ export function RepositoryDetailPage() {
         </div>
         <form onSubmit={startRun} className="run-form">
           <div className="run-form-controls">
-            <label>
+            <label className={useLocalWorkingTree ? "field-disabled" : undefined}>
               <span>Test branch, tag, or commit SHA</span>
               <input
                 value={ref}

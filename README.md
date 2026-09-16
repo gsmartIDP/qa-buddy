@@ -110,7 +110,8 @@ QA Buddy builds the checkout with `git archive HEAD`, then overlays modified and
 
 - Gitignored files never reach the runner. That includes `.env`, `node_modules`, and build output. Host `node_modules` would be the wrong platform for a Linux runner anyway, so setup still installs dependencies inside the container.
 - A file you have created but not yet `git add`ed is included, because untracked files that are not ignored are copied. Files excluded by `.gitignore` are not.
-- As a second line of defence, `.env` style files and private SSH keys are removed from the checkout even if they are committed, and certificate or key material is reported in the run log. `.env.example`, `.env.sample`, `.env.template`, `.env.defaults`, and `.env.dist` are kept.
+- Committed files are never removed, so a local run contains exactly what a run off the same commit would, plus your uncommitted changes. A committed `.env.test` or similar fixture still reaches the runner. Credential-shaped committed files are reported in the run log so you know they are there.
+- An uncommitted `.env` style file that is not gitignored is skipped rather than copied, because a GitHub run would not have it either.
 
 Runs against a local working tree record the `HEAD` commit and are marked dirty when uncommitted changes were applied, so they are never mistaken for a reproducible run. The run history shows `local working tree` in place of the ref and appends `+dirty` to the commit.
 

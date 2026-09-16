@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { archiveLocalWorkingTree, resolveLocalRepositoryPath, sweepSecretFiles } from "./git.js";
+import { archiveLocalWorkingTree, auditCheckoutSecrets, resolveLocalRepositoryPath } from "./git.js";
 import { RunLogger } from "./logger.js";
 
 let root = "";
@@ -79,28 +79,31 @@ describe("local checkout path resolution", () => {
   });
 });
 
-describe("secret file sweep", () => {
-  it("removes environment files, keeps examples, and only warns about key material", () => {
+describe("committed credential audit", () => {
+  it("reports credential-shaped files without deleting any of them", () => {
     const directory = path.join(root, "checkout");
     write(path.join(directory, ".env"), "SECRET=1\n");
-    write(path.join(directory, ".env.local"), "SECRET=2\n");
+    write(path.join(directory, ".env.test"), "JWT_TOKEN=test-value\n");
     write(path.join(directory, ".env.example"), "SECRET=replace-me\n");
     write(path.join(directory, "fixtures/test.key"), "not-really-a-key\n");
     write(path.join(directory, "src/app.js"), "export const a = 1;\n");
 
-    const logger = new RunLogger(dataDirectory, "sweep", []);
-    const removed = sweepSecretFiles(directory, logger);
+    const logger = new RunLogger(dataDirectory, "audit", []);
+    const warnings = auditCheckoutSecrets(directory, logger);
 
-    expect(removed).toBe(2);
-    expect(existsSync(path.join(directory, ".env"))).toBe(false);
-    expect(existsSync(path.join(directory, ".env.local"))).toBe(false);
+    // Tracked files are never removed; a local run must match a GitHub run.
+    expect(existsSync(path.join(directory, ".env"))).toBe(true);
+    expect(existsSync(path.join(directory, ".env.test"))).toBe(true);
     expect(existsSync(path.join(directory, ".env.example"))).toBe(true);
     expect(existsSync(path.join(directory, "fixtures/test.key"))).toBe(true);
     expect(existsSync(path.join(directory, "src/app.js"))).toBe(true);
 
+    expect(warnings).toBe(3);
     const log = readFileSync(logger.filePath, "utf8");
-    expect(log).toContain("Removed environment file");
-    expect(log).toContain("Warning: possible key material");
+    expect(log).toContain(".env.test");
+    expect(log).toContain("committed to this repository");
+    // Example files are not credentials.
+    expect(log).not.toContain(".env.example");
   });
 });
 
@@ -172,5 +175,17 @@ describe("archiving a local working tree", () => {
   it("fails with an actionable message when the path is not a checkout", async () => {
     mkdirSync(path.join(root, "not-a-repo"), { recursive: true });
     await expect(archive("not-a-repo").result).rejects.toThrow("No Git checkout found at not-a-repo");
+  });
+
+  it("keeps a committed .env.test so local runs match a run off main", async () => {
+    const source = makeRepository("committed-env");
+    write(path.join(source, ".env.test"), "JWT_TOKEN=test-value\n");
+    git(source, "add", "-A");
+    git(source, "commit", "--quiet", "-m", "add test env");
+
+    const { result } = archive("committed-env");
+    const { repositoryDirectory } = await result;
+
+    expect(readFileSync(path.join(repositoryDirectory, ".env.test"), "utf8")).toBe("JWT_TOKEN=test-value\n");
   });
 });

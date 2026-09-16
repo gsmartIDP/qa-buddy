@@ -201,7 +201,10 @@ describe("repository app selection", () => {
     const toggle = screen.getByRole("checkbox", { name: /local working tree/i });
     await user.click(toggle);
 
-    expect(screen.getByLabelText("Test branch, tag, or commit SHA").hasAttribute("disabled")).toBe(true);
+    const refInput = screen.getByLabelText("Test branch, tag, or commit SHA");
+    expect(refInput.hasAttribute("disabled")).toBe(true);
+    // The whole field reads as inactive, not just the input element.
+    expect(refInput.closest("label")?.className).toContain("field-disabled");
 
     await user.click(screen.getByRole("button", { name: /Run all apps/ }));
     await screen.findByText("Run queued");

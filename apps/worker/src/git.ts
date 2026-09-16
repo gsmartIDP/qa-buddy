@@ -100,33 +100,37 @@ export async function cloneRepository(options: {
 }
 
 /**
- * Basenames that must never reach a runner container. `.env` style files are
- * removed outright; the broader credential patterns only warn, so a legitimate
- * fixture (for example `fixtures/test.key`) is never silently deleted.
+ * Basenames that look like credentials. `sensitive` files are skipped when they
+ * are untracked, because a GitHub run would not contain them either; `suspicious`
+ * ones are only ever reported.
  */
-const secretFilePatterns: Array<{ pattern: RegExp; action: "remove" | "warn"; label: string }> = [
-  { pattern: /^\.env$/i, action: "remove", label: "environment file" },
-  { pattern: /^\.env\.(?!example$|sample$|template$|defaults$|dist$)[^.]*$/i, action: "remove", label: "environment file" },
-  { pattern: /^\.netrc$/i, action: "remove", label: "netrc credentials" },
-  { pattern: /^(id_rsa|id_dsa|id_ecdsa|id_ed25519)$/i, action: "remove", label: "private SSH key" },
-  { pattern: /\.(pem|p12|pfx|keystore)$/i, action: "warn", label: "possible certificate or key material" },
-  { pattern: /\.key$/i, action: "warn", label: "possible key material" }
+const secretFilePatterns: Array<{ pattern: RegExp; severity: "sensitive" | "suspicious"; label: string }> = [
+  { pattern: /^\.env$/i, severity: "sensitive", label: "environment file" },
+  { pattern: /^\.env\.(?!example$|sample$|template$|defaults$|dist$)[^.]*$/i, severity: "sensitive", label: "environment file" },
+  { pattern: /^\.netrc$/i, severity: "sensitive", label: "netrc credentials" },
+  { pattern: /^(id_rsa|id_dsa|id_ecdsa|id_ed25519)$/i, severity: "sensitive", label: "private SSH key" },
+  { pattern: /\.(pem|p12|pfx|keystore)$/i, severity: "suspicious", label: "possible certificate or key material" },
+  { pattern: /\.key$/i, severity: "suspicious", label: "possible key material" }
 ];
 
-function classifySecretFile(basename: string): { action: "remove" | "warn"; label: string } | null {
+function classifySecretFile(
+  basename: string
+): { severity: "sensitive" | "suspicious"; label: string } | null {
   for (const entry of secretFilePatterns) {
-    if (entry.pattern.test(basename)) return { action: entry.action, label: entry.label };
+    if (entry.pattern.test(basename)) return { severity: entry.severity, label: entry.label };
   }
   return null;
 }
 
 /**
- * Belt-and-braces sweep over an extracted checkout. `git archive` and
- * `git ls-files --exclude-standard` already exclude ignored files, so this
- * should never remove anything; when it does, the run log says so loudly.
+ * Reports committed files that look like credentials. Nothing is deleted: a
+ * local run must contain exactly what a GitHub run would, plus uncommitted
+ * changes. Removing a tracked file here would make local runs diverge from
+ * main, silently breaking suites that rely on a committed fixture such as
+ * `.env.test`.
  */
-export function sweepSecretFiles(root: string, logger: RunLogger): number {
-  let removed = 0;
+export function auditCheckoutSecrets(root: string, logger: RunLogger): number {
+  let warnings = 0;
   const walk = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const absolute = path.join(directory, entry.name);
@@ -137,18 +141,14 @@ export function sweepSecretFiles(root: string, logger: RunLogger): number {
       }
       const match = classifySecretFile(entry.name);
       if (!match) continue;
-      const relative = path.relative(root, absolute);
-      if (match.action === "remove") {
-        rmSync(absolute, { force: true });
-        removed += 1;
-        logger.line(`Removed ${match.label} from the checkout before running tests: ${relative}`);
-      } else {
-        logger.line(`Warning: ${match.label} is tracked in this repository and was passed to the runner: ${relative}`);
-      }
+      warnings += 1;
+      logger.line(
+        `Warning: ${path.relative(root, absolute)} looks like ${match.label} and is committed to this repository, so the runner receives it here exactly as it would for a GitHub run`
+      );
     }
   };
   walk(root);
-  return removed;
+  return warnings;
 }
 
 export function resolveLocalRepositoryPath(localSourceDirectory: string, localPath: string): string {
@@ -233,8 +233,10 @@ export async function archiveLocalWorkingTree(options: {
       options.logger.line(`Skipped a working-tree path that escaped the checkout: ${relative}`);
       continue;
     }
+    // Untracked and not ignored: a GitHub run would not have this file either,
+    // so skipping it keeps the two sources equivalent.
     const match = classifySecretFile(path.basename(relative));
-    if (match?.action === "remove") {
+    if (match?.severity === "sensitive") {
       skipped += 1;
       options.logger.line(`Skipped uncommitted ${match.label}: ${relative}`);
       continue;
@@ -261,10 +263,7 @@ export async function archiveLocalWorkingTree(options: {
       : "Local working tree is clean; the checkout matches HEAD"
   );
 
-  const sweptCount = sweepSecretFiles(repositoryDirectory, options.logger);
-  if (sweptCount > 0) {
-    options.logger.line(`Removed ${sweptCount} tracked sensitive file(s) before starting the runner`);
-  }
+  auditCheckoutSecrets(repositoryDirectory, options.logger);
 
   return { repositoryDirectory, resolvedSha, dirty };
 }

@@ -282,6 +282,10 @@ input::placeholder { color: #756f7c; }
 input:focus, select:focus { border-color: #a68bce; box-shadow: 0 0 0 3px #8e69b710; }
 select { padding-right: 28px; }
 input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+input:disabled, select:disabled { color: #9b94a4; background: #f5f3f8; border-color: #eae6ef; cursor: not-allowed; }
+input:disabled::placeholder { color: #b0aab8; }
+/* Mutes the label and helper text alongside a disabled control. */
+label.field-disabled > span, label.field-disabled > small { color: #9b94a4; }
 .app-form-list { display: flex; flex-direction: column; gap: 18px; }
 .auto-detect-toggle { display: flex; flex-direction: row; align-items: flex-start; gap: 12px; padding: 18px; background: #faf8fe; border: 1px solid #e6dcf3; border-radius: 9px; margin-bottom: 18px; cursor: pointer; }
 .auto-detect-toggle input { width: 17px; height: 17px; min-height: 17px; padding: 0; margin: 1px 0 0; flex-shrink: 0; }
