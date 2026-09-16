@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
-import type { RepositoryDetail, RunDetail } from "@qa-buddy/shared";
+import { activeRunStatuses, type RepositoryDetail, type RunDetail, type RunSummary } from "@qa-buddy/shared";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { CoverageTable } from "../components/CoverageTable";
@@ -20,6 +20,7 @@ export function RepositoryDetailPage() {
   const [running, setRunning] = useState(false);
   const [selectedApps, setSelectedApps] = useState<string[]>([]);
   const [useLocalWorkingTree, setUseLocalWorkingTree] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
   useEffect(() => {
     api<{ repository: RepositoryDetail }>(`/api/repositories/${repositoryId}`)
@@ -30,6 +31,35 @@ export function RepositoryDetailPage() {
       })
       .catch((caught: Error) => setError(caught.message));
   }, [repositoryId]);
+
+  const activeRun: RunSummary | undefined = repository?.runs.find((candidate) =>
+    activeRunStatuses.includes(candidate.status)
+  );
+  const activeRunId = activeRun?.id;
+
+  useEffect(() => {
+    if (!activeRunId) return;
+    const interval = setInterval(() => {
+      api<{ repository: RepositoryDetail }>(`/api/repositories/${repositoryId}`)
+        .then(({ repository: result }) => setRepository(result))
+        .catch(() => undefined);
+    }, 2_000);
+    return () => clearInterval(interval);
+  }, [activeRunId, repositoryId]);
+
+  const stopActiveRun = async () => {
+    if (!activeRunId) return;
+    if (!window.confirm("Stop this run? Applications that have not finished are marked skipped.")) return;
+    setStopping(true);
+    setError("");
+    try {
+      await api(`/api/runs/${activeRunId}/cancel`, { method: "POST" });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to stop this run");
+    } finally {
+      setStopping(false);
+    }
+  };
 
   const startRun = async (event: FormEvent) => {
     event.preventDefault();
@@ -67,7 +97,7 @@ export function RepositoryDetailPage() {
   if (error && !repository) return <div className="page"><div className="alert alert-error" role="alert">{error}</div></div>;
   if (!repository) return <Loading label="Loading repository…" />;
 
-  const active = repository.runs.some((run) => ["queued", "cloning", "setup", "building", "testing"].includes(run.status));
+  const active = Boolean(activeRun);
   const selectableApps = repository.selectableApps;
   const latestStatus = new Map(repository.latestRun?.appRuns.map((app) => [app.name, app.status]) ?? []);
   const toggleApp = (name: string) => {
@@ -128,6 +158,18 @@ export function RepositoryDetailPage() {
                   : <>Saved default: <code>{repository.defaultRef}</code></>}
               </small>
             </label>
+            {activeRun && (
+              <button
+                type="button"
+                className="button button-danger"
+                onClick={stopActiveRun}
+                disabled={stopping || activeRun.cancelRequested}
+                title="Stop the run in progress without marking it as failed"
+              >
+                <Icon name="close" size={14} />
+                {activeRun.cancelRequested || stopping ? "Stopping…" : "Stop run"}
+              </button>
+            )}
             <button className="button button-primary" disabled={running || active || (selectableApps.length > 0 && selectedApps.length === 0)}>
               <Icon name="play" size={14} />
               {running ? "Queueing…" : active ? "Run already active" : `Run ${selectedApps.length === selectableApps.length ? "all" : selectedApps.length} app${selectedApps.length === 1 ? "" : "s"} →`}

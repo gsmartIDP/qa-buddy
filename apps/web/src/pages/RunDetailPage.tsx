@@ -29,6 +29,7 @@ export function RunDetailPage() {
   const [loadError, setLoadError] = useState("");
   const [rerunError, setRerunError] = useState("");
   const [rerunning, setRerunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export function RunDetailPage() {
     setLoadError("");
     setRerunError("");
     setRerunning(false);
+    setStopping(false);
 
     let cancelled = false;
     let source: EventSource | null = null;
@@ -90,6 +92,20 @@ export function RunDetailPage() {
     }
   };
 
+  const stopRun = async () => {
+    if (!window.confirm("Stop this run? Applications that have not finished are marked skipped.")) return;
+    setStopping(true);
+    setRerunError("");
+    try {
+      await api(`/api/runs/${run.id}/cancel`, { method: "POST" });
+      // The live event stream delivers the authoritative run state, including the
+      // move to "interrupted" once the worker stops.
+    } catch (caught) {
+      setRerunError(caught instanceof Error ? caught.message : "Unable to stop this run");
+      setStopping(false);
+    }
+  };
+
   return (
     <div className="page page-wide">
       <div className="breadcrumbs"><Link to="/activity">Run history</Link><span>/</span><Link to={`/repositories/${run.repositoryId}`}>{run.configurationSnapshot.name}</Link><span>/</span><span>Run {run.id.slice(0, 8)}</span></div>
@@ -97,6 +113,18 @@ export function RunDetailPage() {
         <div><span className="eyebrow">Test run · {run.id.slice(0, 8)}</span><h1>{run.configurationSnapshot.name}</h1><p>Ref <code>{run.requestedRef}</code>{run.resolvedSha && <> at <code>{run.resolvedSha.slice(0, 12)}</code></>} · {run.selectedApps ? <>Selected apps: <code>{run.selectedApps.join(", ")}</code></> : "All apps"}</p></div>
         <div className="heading-actions run-heading-actions">
           <StatusBadge status={run.status} />
+          {isActive && (
+            <button
+              type="button"
+              className="button button-danger"
+              onClick={stopRun}
+              disabled={stopping || run.cancelRequested}
+              title="Stop this run without marking it as failed"
+            >
+              <Icon name="close" size={14} />
+              {run.cancelRequested || stopping ? "Stopping…" : "Stop run"}
+            </button>
+          )}
           <button
             type="button"
             className="button button-primary"
@@ -111,7 +139,14 @@ export function RunDetailPage() {
       </section>
 
       {rerunError && <div className="alert alert-error" role="alert">{rerunError}</div>}
-      {run.error && <div className="alert alert-error" role="alert">{run.error}</div>}
+      {run.error && (
+        <div
+          className={run.status === "interrupted" ? "alert alert-notice" : "alert alert-error"}
+          role={run.status === "interrupted" ? "status" : "alert"}
+        >
+          {run.error}
+        </div>
+      )}
 
       <section className="run-stats">
         <div className="stat-card"><span>Created</span><strong>{formatDate(run.createdAt)}</strong></div>

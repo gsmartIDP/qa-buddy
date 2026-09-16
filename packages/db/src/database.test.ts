@@ -350,4 +350,44 @@ describe("QaBuddyDatabase", () => {
       database.connection.prepare("SELECT COUNT(*) AS count FROM coverage_files").get()
     ).toEqual({ count: 0 });
   });
+
+  it("stops a queued run outright without marking it failed", () => {
+    const repository = database.createRepository(input);
+    const run = database.createRun(repository.id, "main");
+
+    expect(database.requestRunCancellation(run.id)).toBe("stopped");
+
+    const stopped = database.getRun(run.id);
+    expect(stopped?.status).toBe("interrupted");
+    expect(stopped?.cancelRequested).toBe(true);
+    expect(stopped?.finishedAt).not.toBeNull();
+    expect(stopped?.appRuns.every((app) => app.status === "skipped")).toBe(true);
+    // The repository is free again immediately.
+    expect(() => database.createRun(repository.id, "main")).not.toThrow();
+  });
+
+  it("flags a claimed run for the worker rather than ending it directly", () => {
+    const repository = database.createRepository(input);
+    const run = database.createRun(repository.id, "main");
+    database.claimNextRun();
+
+    expect(database.isCancellationRequested(run.id)).toBe(false);
+    expect(database.requestRunCancellation(run.id)).toBe("requested");
+    expect(database.isCancellationRequested(run.id)).toBe(true);
+
+    // Still active: only the worker may move a claimed run to a terminal state.
+    const claimed = database.getRun(run.id);
+    expect(claimed?.status).toBe("cloning");
+    expect(claimed?.finishedAt).toBeNull();
+  });
+
+  it("reports runs that cannot be stopped", () => {
+    const repository = database.createRepository(input);
+    const run = database.createRun(repository.id, "main");
+    database.updateRun(run.id, { status: "passed", finished: true });
+
+    expect(database.requestRunCancellation(run.id)).toBe("already_finished");
+    expect(database.requestRunCancellation("missing-run")).toBe("not_found");
+    expect(database.getRun(run.id)?.status).toBe("passed");
+  });
 });

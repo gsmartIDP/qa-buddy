@@ -177,6 +177,8 @@ export interface RunSummary {
   useLocalWorkingTree: boolean;
   /** True when the local working tree had uncommitted changes at archive time. */
   dirty: boolean;
+  /** True once a stop has been requested; the worker ends the run as interrupted. */
+  cancelRequested: boolean;
   status: RunStatus;
   error: string | null;
   selectedApps: string[] | null;

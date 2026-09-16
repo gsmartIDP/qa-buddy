@@ -128,6 +128,18 @@ If `GITHUB_IDP_REGISTRY` is used, you will need to include it in the `Allowed en
 
 The Build command override may be required for some apps where the default cannot be completed. As an example, with sub-applications pdf/renderer that cannot build correctly, you can use this override: `pnpm exec turbo run build --concurrency=2 --filter=!pdf --filter=!renderer` to ommit them and have the tool build correctly.
 
+## Stopping a run
+
+**Stop run** is available on the repository page while a run is in flight, and on the run detail page. A stopped run finishes as `interrupted`, not `failed`, so a deliberate stop is never mistaken for a broken test suite. Applications that had not finished are marked skipped, and the repository is free to queue a new run immediately.
+
+A run can be stopped in any phase, including a long setup or build. The worker checks for a stop after cloning, after setup, after the build, before each app, and after each test command, and killing the runner container interrupts whatever command is running rather than waiting for it to finish.
+
+A run that has not been claimed by the worker yet stops instantly. A run already in flight is flagged, and the worker notices within about a second. The server and worker are separate processes sharing only SQLite, so the stop is polled rather than pushed.
+
+While a run is active the repository page refreshes every two seconds; the run detail page streams updates continuously.
+
+Stopped runs never update a coverage snapshot, since their apps did not finish.
+
 ## Coverage gaps
 
 Every run that uses a GitHub ref records a per-file coverage snapshot for each app that produced a report. Open **Coverage gaps** from the repository page to rank files by their weakest metric.
@@ -177,6 +189,7 @@ Useful endpoints:
 - `GET /api/repositories/:repositoryId/coverage` (per-app snapshot metadata)
 - `GET /api/repositories/:repositoryId/coverage/files` (ranked per-file coverage; `app`, `metric`, `maxPercent`, `search`, `limit`, `offset`)
 - `GET /api/runs/:runId`
+- `POST /api/runs/:runId/cancel` (stop a queued or in-flight run)
 - `GET /api/runs/:runId/log` (full redacted log download)
 - `GET /api/runs/:runId/events` (server-sent events)
 

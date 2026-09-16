@@ -38,6 +38,7 @@ function runFixture(status: RunStatus = "passed", selectedApps: string[] | null 
     resolvedSha: "0123456789abcdef",
     useLocalWorkingTree: false,
     dirty: false,
+    cancelRequested: false,
     status,
     error: null,
     selectedApps,
@@ -198,5 +199,39 @@ describe("run detail re-run action", () => {
     const rerunButton = await screen.findByRole("button", { name: "Re-run" });
     expect((rerunButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: "Queueing…" })).toBeNull();
+  });
+
+  it("offers a stop button only while a run is active and posts the cancellation", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { fetchMock, user } = renderPage(runFixture("testing"));
+    await screen.findByRole("button", { name: /Stop run/ });
+
+    await user.click(screen.getByRole("button", { name: /Stop run/ }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) => String(url).endsWith("/cancel") && init?.method === "POST"
+        )
+      ).toBe(true)
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("hides the stop button once the run has finished", async () => {
+    renderPage(runFixture("passed"));
+    await screen.findByRole("button", { name: /Re-run/ });
+    expect(screen.queryByRole("button", { name: /Stop run/ })).toBeNull();
+  });
+
+  it("does not stop the run when the confirmation is dismissed", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { fetchMock, user } = renderPage(runFixture("testing"));
+    await screen.findByRole("button", { name: /Stop run/ });
+
+    await user.click(screen.getByRole("button", { name: /Stop run/ }));
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/cancel"))).toBe(false);
+    confirmSpy.mockRestore();
   });
 });

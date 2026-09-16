@@ -22,7 +22,7 @@ import type {
   RunSummary,
   TestResults
 } from "@qa-buddy/shared";
-import { activeRunStatuses, coverageMetricNames } from "@qa-buddy/shared";
+import { activeRunStatuses, coverageMetricNames, terminalRunStatuses } from "@qa-buddy/shared";
 
 const initialMigrationSql = `
   CREATE TABLE repositories (
@@ -150,6 +150,10 @@ const migrations = [
 
       CREATE INDEX coverage_files_snapshot_idx ON coverage_files(snapshot_id);
     `
+  },
+  {
+    version: 8,
+    sql: "ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;"
   }
 ] as const;
 
@@ -188,6 +192,7 @@ interface RunRow {
   resolved_sha: string | null;
   use_local_working_tree: number;
   dirty: number;
+  cancel_requested: number;
   status: RunStatus;
   error: string | null;
   configuration_snapshot_json: string;
@@ -349,6 +354,7 @@ export class QaBuddyDatabase {
       resolvedSha: row.resolved_sha,
       useLocalWorkingTree: row.use_local_working_tree === 1,
       dirty: row.dirty === 1,
+      cancelRequested: row.cancel_requested === 1,
       status: row.status,
       error: row.error,
       selectedApps: configurationSnapshot.selectedApps,
@@ -923,6 +929,48 @@ export class QaBuddyDatabase {
         now(),
         id
       );
+  }
+
+
+  /**
+   * Requests that a run stop. A run the worker has not claimed yet is ended
+   * immediately; an in-flight run gets a flag the worker polls between steps.
+   */
+  requestRunCancellation(
+    runId: string
+  ): "not_found" | "already_finished" | "stopped" | "requested" {
+    return this.connection.transaction(() => {
+      const row = this.connection.prepare("SELECT status FROM runs WHERE id = ?").get(runId) as
+        | { status: RunStatus }
+        | undefined;
+      if (!row) return "not_found" as const;
+      if (terminalRunStatuses.includes(row.status)) return "already_finished" as const;
+
+      if (row.status === "queued") {
+        const result = this.connection
+          .prepare(`
+            UPDATE runs
+            SET status = 'interrupted', cancel_requested = 1, error = ?, finished_at = ?
+            WHERE id = ? AND status = 'queued'
+          `)
+          .run("Run stopped before it started", now(), runId);
+        if (result.changes === 1) {
+          this.skipPendingApps(runId, "Run stopped before it started");
+          return "stopped" as const;
+        }
+        // The worker claimed it in between; fall through to the polled flag.
+      }
+
+      this.connection.prepare("UPDATE runs SET cancel_requested = 1 WHERE id = ?").run(runId);
+      return "requested" as const;
+    }).immediate();
+  }
+
+  isCancellationRequested(runId: string): boolean {
+    const row = this.connection
+      .prepare("SELECT cancel_requested FROM runs WHERE id = ?")
+      .get(runId) as { cancel_requested: number } | undefined;
+    return row?.cancel_requested === 1;
   }
 
   skipPendingApps(runId: string, reason: string): void {

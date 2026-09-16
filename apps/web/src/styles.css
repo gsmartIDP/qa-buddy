@@ -392,6 +392,7 @@ input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
 .empty-state p { max-width: 400px; font-size: 14px; line-height: 1.8; color: var(--muted); margin: 0 auto 24px; }
 .alert { border-radius: 9px; padding: 14px 18px; font-size: 14px; line-height: 1.7; margin-bottom: 20px; overflow-wrap: anywhere; }
 .alert-error { color: #b76073; border: 1px solid #efd5df; background: #fff3f7; }
+.alert-notice { color: #6d6480; border: 1px solid #e2dcec; background: #f8f6fc; }
 .inline-error { color: var(--danger); padding: 0 20px; font-size: 12px; line-height: 1.6; }
 .loading { min-height: 65vh; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); font-size: 14px; }
 .spinner { width: 18px; height: 18px; border: 2px solid #e4d7f1; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }

@@ -202,6 +202,21 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
     return { run };
   });
 
+
+  app.post<{ Params: { runId: string } }>("/api/runs/:runId/cancel", async (request, reply) => {
+    const outcome = database.requestRunCancellation(request.params.runId);
+    if (outcome === "not_found") {
+      return reply.code(404).send({ error: "Run not found" });
+    }
+    if (outcome === "already_finished") {
+      return reply.code(409).send({ error: "This run has already finished" });
+    }
+    return reply.code(202).send({
+      run: database.getRun(request.params.runId),
+      stopped: outcome === "stopped"
+    });
+  });
+
   app.get<{ Params: { runId: string } }>("/api/runs/:runId/log", async (request, reply) => {
     if (!database.getRun(request.params.runId)) {
       return reply.code(404).send({ error: "Run not found" });

@@ -57,6 +57,7 @@ function repositoryFixture(): RepositoryDetail {
     resolvedSha: "0123456789abcdef",
     useLocalWorkingTree: false,
     dirty: false,
+    cancelRequested: false,
     status: "failed" as const,
     error: "2 apps failed",
     selectedApps: null,
@@ -209,5 +210,33 @@ describe("repository app selection", () => {
       ref: "main",
       useLocalWorkingTree: true
     });
+  });
+
+  it("offers a stop control while a run is in flight and posts the cancellation", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const repository = repositoryFixture();
+    const running = {
+      ...repository,
+      runs: [{ ...repository.runs[0]!, id: "run-active", status: "building" as const }]
+    };
+    const { fetchMock, user } = renderPage(running);
+
+    const stop = await screen.findByRole("button", { name: /Stop run/ });
+    await user.click(stop);
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) => String(url) === "/api/runs/run-active/cancel" && init?.method === "POST"
+        )
+      ).toBe(true)
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("hides the stop control when no run is in flight", async () => {
+    renderPage();
+    await screen.findByText("3 of 3 selected");
+    expect(screen.queryByRole("button", { name: /Stop run/ })).toBeNull();
   });
 });

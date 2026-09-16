@@ -27,6 +27,13 @@ import { readTestResults } from "./test-results.js";
 class SetupError extends Error {}
 class BuildError extends Error {}
 
+/** Raised once a stop has been requested so the run ends as interrupted, not failed. */
+export class RunCancelledError extends Error {
+  constructor() {
+    super("Run stopped by request");
+  }
+}
+
 export interface WorkerOptions {
   database: QaBuddyDatabase;
   docker: Docker;
@@ -38,6 +45,8 @@ export interface WorkerOptions {
   githubToken?: string;
   historyLimit: number;
   pollIntervalMs?: number;
+  /** How often an in-flight run checks whether a stop has been requested. */
+  cancellationPollMs?: number;
 }
 
 export type CoverageSnapshotSkipReason = "no-coverage" | "local-working-tree" | "no-files";
@@ -235,6 +244,24 @@ export class QaBuddyWorker {
     let repositoryDirectory = "";
     let appFailures = 0;
     let appRuns = run.appRuns;
+    let cancelled = false;
+
+    // Polled rather than pushed: the server and worker are separate processes
+    // that share only SQLite.
+    const cancellationPoll = setInterval(() => {
+      if (cancelled) return;
+      try {
+        if (!this.options.database.isCancellationRequested(run.id)) return;
+      } catch {
+        return; // A transient read failure should not end the run.
+      }
+      cancelled = true;
+      logger.line("Stop requested; terminating the runner");
+      void this.activeRunner?.stop().catch(() => undefined);
+    }, this.options.cancellationPollMs ?? 1_000);
+    const ensureRunning = (): void => {
+      if (cancelled) throw new RunCancelledError();
+    };
 
     logger.line(`Run ${run.id} queued for ${run.configurationSnapshot.githubUrl}`);
     logger.line(
@@ -267,6 +294,7 @@ export class QaBuddyWorker {
             })),
             dirty: false
           };
+      ensureRunning();
       repositoryDirectory = source.repositoryDirectory;
       this.options.database.updateRun(run.id, {
         resolvedSha: source.resolvedSha,
@@ -315,6 +343,7 @@ export class QaBuddyWorker {
           workspaceContainerPath,
           this.remaining(deadline)
         );
+        ensureRunning();
         if (setup.exitCode !== 0) {
           throw new SetupError(`Setup command exited with code ${setup.exitCode}`);
         }
@@ -328,6 +357,7 @@ export class QaBuddyWorker {
           workspaceContainerPath,
           this.remaining(deadline)
         );
+        ensureRunning();
         if (build.exitCode !== 0) {
           throw new BuildError(`Build command exited with code ${build.exitCode}`);
         }
@@ -335,6 +365,7 @@ export class QaBuddyWorker {
 
       this.options.database.updateRun(run.id, { status: "testing" });
       for (const appRun of appRuns) {
+        ensureRunning();
         this.options.database.startAppRun(appRun.id);
         logger.line(`Testing ${appRun.name}`);
         let exitCode = 1;
@@ -352,6 +383,7 @@ export class QaBuddyWorker {
             path.posix.join(workspaceContainerPath, appRun.workingDirectory),
             this.remaining(deadline)
           );
+          ensureRunning();
           exitCode = result.exitCode;
           try {
             testResults = readTestResults(repositoryDirectory, appRun.workingDirectory);
@@ -383,7 +415,7 @@ export class QaBuddyWorker {
             logger.line(`${appRun.name} coverage error: ${coverageError}`);
           }
         } catch (error) {
-          if (error instanceof RunnerTimeoutError) throw error;
+          if (error instanceof RunnerTimeoutError || error instanceof RunCancelledError) throw error;
           coverageError = error instanceof Error ? error.message : "Test command failed to execute";
           logger.line(`${appRun.name} command error: ${coverageError}`);
         }
@@ -418,16 +450,29 @@ export class QaBuddyWorker {
         this.options.database.updateRun(run.id, { status: "passed", error: null, finished: true });
       }
     } catch (error) {
-      const timedOut = error instanceof RunnerTimeoutError || (error instanceof ProcessError && error.exitCode === null);
-      const message = error instanceof Error ? error.message : "Run failed unexpectedly";
-      logger.line(`${timedOut ? "Timeout" : "Run failure"}: ${message}`);
-      this.options.database.skipPendingApps(run.id, message);
-      this.options.database.updateRun(run.id, {
-        status: timedOut ? "timed_out" : "failed",
-        error: message,
-        finished: true
-      });
+      if (error instanceof RunCancelledError) {
+        // A deliberate stop is not a failure; apps that never ran are skipped.
+        logger.line("Run stopped by request");
+        this.options.database.skipPendingApps(run.id, "Run stopped by request");
+        this.options.database.updateRun(run.id, {
+          status: "interrupted",
+          error: "Run stopped by request",
+          finished: true
+        });
+      } else {
+        const timedOut =
+          error instanceof RunnerTimeoutError || (error instanceof ProcessError && error.exitCode === null);
+        const message = error instanceof Error ? error.message : "Run failed unexpectedly";
+        logger.line(`${timedOut ? "Timeout" : "Run failure"}: ${message}`);
+        this.options.database.skipPendingApps(run.id, message);
+        this.options.database.updateRun(run.id, {
+          status: timedOut ? "timed_out" : "failed",
+          error: message,
+          finished: true
+        });
+      }
     } finally {
+      clearInterval(cancellationPoll);
       if (this.activeRunner) {
         try {
           await this.activeRunner.remove();

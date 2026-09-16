@@ -196,4 +196,36 @@ describe("repository API", () => {
     const missing = await app.inject({ method: "GET", url: "/api/repositories/does-not-exist/coverage" });
     expect(missing.statusCode).toBe(404);
   });
+
+  it("stops a run on request and refuses to stop a finished one", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+    const queued = await app.inject({ method: "POST", url: `/api/repositories/${repositoryId}/runs`, payload: {} });
+    const runId = queued.json().run.id as string;
+
+    const stopped = await app.inject({ method: "POST", url: `/api/runs/${runId}/cancel` });
+    expect(stopped.statusCode).toBe(202);
+    expect(stopped.json().stopped).toBe(true);
+    expect(stopped.json().run.status).toBe("interrupted");
+
+    const again = await app.inject({ method: "POST", url: `/api/runs/${runId}/cancel` });
+    expect(again.statusCode).toBe(409);
+
+    const missing = await app.inject({ method: "POST", url: "/api/runs/does-not-exist/cancel" });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it("flags an in-flight run for the worker instead of ending it in the API", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+    const queued = await app.inject({ method: "POST", url: `/api/repositories/${repositoryId}/runs`, payload: {} });
+    const runId = queued.json().run.id as string;
+    database.claimNextRun();
+
+    const response = await app.inject({ method: "POST", url: `/api/runs/${runId}/cancel` });
+    expect(response.statusCode).toBe(202);
+    expect(response.json().stopped).toBe(false);
+    expect(response.json().run.cancelRequested).toBe(true);
+    expect(response.json().run.status).toBe("cloning");
+  });
 });

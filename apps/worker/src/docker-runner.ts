@@ -92,6 +92,11 @@ export class DockerRunner {
     }
   }
 
+  /** Kills the container so an in-flight exec stops streaming and settles. */
+  async stop(): Promise<void> {
+    await this.forceStop();
+  }
+
   private async forceStop(): Promise<void> {
     if (!this.container) return;
     try {
