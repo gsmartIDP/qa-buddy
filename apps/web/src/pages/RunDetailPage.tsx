@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RunDetail } from "@qa-buddy/shared";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { CoverageTable } from "../components/CoverageTable";
+import { appRunDurationMs, CoverageTable, formatDuration } from "../components/CoverageTable";
 import { Loading } from "../components/Loading";
 import { StatusBadge } from "../components/StatusBadge";
 import { TestCaseReadout } from "../components/TestCaseReadout";
@@ -92,6 +92,12 @@ export function RunDetailPage() {
     }
   };
 
+  const totalMs =
+    run.startedAt && run.finishedAt
+      ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
+      : null;
+  const appMs = run.appRuns.reduce((sum, app) => sum + (appRunDurationMs(app) ?? 0), 0);
+
   const stopRun = async () => {
     if (!window.confirm("Stop this run? Applications that have not finished are marked skipped.")) return;
     setStopping(true);
@@ -158,6 +164,14 @@ export function RunDetailPage() {
       <section className="panel detail-section">
         <div className="panel-heading"><div><span className="eyebrow">App results</span><h2>Test and coverage readout</h2></div>{isActive && <span className="live-indicator"><i /> Live</span>}</div>
         <CoverageTable appRuns={run.appRuns} />
+        {totalMs !== null && (
+          <div className="run-timing">
+            <span>Total <strong>{formatDuration(totalMs)}</strong></span>
+            <span>Apps <strong>{formatDuration(appMs)}</strong></span>
+            {/* Whatever the run spent outside the app suites: clone, setup and build. */}
+            <span>Checkout, setup and build <strong>{formatDuration(Math.max(0, totalMs - appMs))}</strong></span>
+          </div>
+        )}
         {run.appRuns.some((app) => app.coverageError) && <div className="app-errors">{run.appRuns.filter((app) => app.coverageError).map((app) => <div key={app.id}><strong>{app.name}</strong><span>{app.coverageError}</span></div>)}</div>}
       </section>
 

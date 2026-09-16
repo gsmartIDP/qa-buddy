@@ -397,6 +397,10 @@ label.field-disabled > span, label.field-disabled > small { color: #9b94a4; }
 .alert { border-radius: 9px; padding: 14px 18px; font-size: 14px; line-height: 1.7; margin-bottom: 20px; overflow-wrap: anywhere; }
 .alert-error { color: #b76073; border: 1px solid #efd5df; background: #fff3f7; }
 .alert-notice { color: #6d6480; border: 1px solid #e2dcec; background: #f8f6fc; }
+.duration-value { font-variant-numeric: tabular-nums; font-size: 13px; color: #5a5067; }
+.additional-workspaces { margin-top: 18px; }
+.run-timing { display: flex; flex-wrap: wrap; gap: 18px; padding: 16px 25px; border-top: 1px solid #ece7f3; font-size: 13px; color: #6d637b; }
+.run-timing strong { color: #5a5067; font-variant-numeric: tabular-nums; }
 .inline-error { color: var(--danger); padding: 0 20px; font-size: 12px; line-height: 1.6; }
 .loading { min-height: 65vh; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); font-size: 14px; }
 .spinner { width: 18px; height: 18px; border: 2px solid #e4d7f1; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }

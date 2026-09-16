@@ -17,6 +17,7 @@ const initialValue: RepositoryInput = {
   githubUrl: "",
   defaultRef: "main",
   localPath: undefined,
+  additionalWorkspaces: [],
   runnerImage: "node:22-bookworm",
   setupCommand: "npm ci",
   buildCommand: undefined,
@@ -32,6 +33,7 @@ export function RepositoryFormPage() {
   const navigate = useNavigate();
   const [value, setValue] = useState<RepositoryInput>(initialValue);
   const [environmentNames, setEnvironmentNames] = useState("");
+  const [workspaceNames, setWorkspaceNames] = useState("");
   const [loading, setLoading] = useState(Boolean(repositoryId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -45,6 +47,7 @@ export function RepositoryFormPage() {
           githubUrl: repository.githubUrl,
           defaultRef: repository.defaultRef,
           localPath: repository.localPath,
+          additionalWorkspaces: repository.additionalWorkspaces ?? [],
           runnerImage: repository.runnerImage,
           setupCommand: repository.setupCommand,
           buildCommand: repository.buildCommand,
@@ -55,6 +58,7 @@ export function RepositoryFormPage() {
           apps: repository.apps.map(({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app)
         });
         setEnvironmentNames(repository.environmentAllowlist.join(", "));
+        setWorkspaceNames((repository.additionalWorkspaces ?? []).join(", "));
       })
       .catch((caught: Error) => setError(caught.message))
       .finally(() => setLoading(false));
@@ -77,7 +81,13 @@ export function RepositoryFormPage() {
       environmentAllowlist: environmentNames
         .split(",")
         .map((name) => name.trim())
-        .filter(Boolean)
+        .filter(Boolean),
+      additionalWorkspaces: value.autoDetect
+        ? workspaceNames
+            .split(",")
+            .map((name) => name.trim().replace(/\/+$/, ""))
+            .filter(Boolean)
+        : []
     };
     try {
       const response = await api<{ repository: Repository }>(
@@ -299,16 +309,33 @@ export function RepositoryFormPage() {
             </span>
           </label>
           {value.autoDetect ? (
-            <div className="auto-detect-note">
-              <span aria-hidden="true">⌁</span>
-              <div>
-                <strong>Apps and coverage reports will be discovered after each fresh clone.</strong>
-                <p>
-                  QA Buddy looks for Istanbul <code>coverage-summary.json</code> or <code>lcov.info</code>
-                  beneath each detected app. Edit the setup command above if your workspace needs extra preparation.
-                </p>
+            <>
+              <div className="auto-detect-note">
+                <span aria-hidden="true">⌁</span>
+                <div>
+                  <strong>Apps and coverage reports will be discovered after each fresh clone.</strong>
+                  <p>
+                    QA Buddy looks for Istanbul <code>coverage-summary.json</code> or <code>lcov.info</code>
+                    beneath each detected app. Edit the setup command above if your workspace needs extra preparation.
+                  </p>
+                </div>
               </div>
-            </div>
+              <label className="field-span additional-workspaces">
+                <span>Additional workspaces</span>
+                <input
+                  value={workspaceNames}
+                  onChange={(event) => setWorkspaceNames(event.target.value)}
+                  placeholder="libs/scout-ui, libs/infuse-ui"
+                  autoComplete="off"
+                />
+                <small>
+                  Comma-separated workspace directories to test alongside <code>apps/</code>, for shared libraries
+                  that are not applications. Each must be a pnpm workspace with a <code>package.json</code>, and a
+                  directory that cannot be found fails the run. Workspaces with no test script, or whose suite
+                  reports no tests, are skipped without failing the run.
+                </small>
+              </label>
+            </>
           ) : (
             <div className="app-form-list">
               {value.apps.map((app, index) => (

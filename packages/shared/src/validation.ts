@@ -88,6 +88,18 @@ export const repositoryInputSchema = z
       )
       .optional()
       .or(z.literal("").transform(() => undefined)),
+    additionalWorkspaces: z
+      .array(
+        z
+          .string()
+          .trim()
+          .refine(
+            (value) => isSafeRelativePath(value),
+            "Workspace directory must be a relative path inside the repository"
+          )
+      )
+      .max(50)
+      .default([]),
     runnerImage: z
       .string()
       .trim()
@@ -125,6 +137,22 @@ export const repositoryInputSchema = z
       }
       names.add(key);
     });
+
+    if (new Set(value.additionalWorkspaces).size !== value.additionalWorkspaces.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["additionalWorkspaces"],
+        message: "Additional workspaces must be unique"
+      });
+    }
+
+    if (value.additionalWorkspaces.length > 0 && !value.autoDetect) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["additionalWorkspaces"],
+        message: "Additional workspaces apply to auto-detection; enable it or configure these apps manually"
+      });
+    }
 
     if (new Set(value.environmentAllowlist).size !== value.environmentAllowlist.length) {
       context.addIssue({

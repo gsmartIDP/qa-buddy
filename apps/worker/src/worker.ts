@@ -309,7 +309,8 @@ export class QaBuddyWorker {
       if (run.configurationSnapshot.autoDetect) {
         const detection = await detectPnpmWorkspaceApps(
           repositoryDirectory,
-          run.configurationSnapshot.testWorkerLimit
+          run.configurationSnapshot.testWorkerLimit,
+          run.configurationSnapshot.additionalWorkspaces ?? []
         );
         logger.line(
           `Detected ${detection.apps.length} testable app${detection.apps.length === 1 ? "" : "s"} across ${detection.workspaceCount} pnpm workspace${detection.workspaceCount === 1 ? "" : "s"}${detection.hasTurbo ? " with turbo.json" : ""}`
@@ -418,6 +419,23 @@ export class QaBuddyWorker {
           if (error instanceof RunnerTimeoutError || error instanceof RunCancelledError) throw error;
           coverageError = error instanceof Error ? error.message : "Test command failed to execute";
           logger.line(`${appRun.name} command error: ${coverageError}`);
+        }
+
+        // A suite that ran cleanly with nothing to run (for example a package
+        // mid-migration using --passWithNoTests) is skipped rather than failed,
+        // and its empty coverage never reaches the snapshot.
+        const ranNoTests = exitCode === 0 && testResults !== null && testResults.total === 0;
+        if (ranNoTests) {
+          logger.line(`${appRun.name} reported no tests; skipping it without failing the run`);
+          this.options.database.finishAppRun(appRun.id, {
+            status: "skipped",
+            exitCode,
+            coverage: null,
+            testResults,
+            testResultsError: null,
+            coverageError: "No tests were found in this workspace"
+          });
+          continue;
         }
 
         const passed = exitCode === 0 && coverage !== null;

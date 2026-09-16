@@ -60,6 +60,15 @@ Enable **Auto-detect pnpm/Turborepo apps** when the repository has a root `pnpm-
 
 The presence of `turbo.json` is reported in the run log, but pnpm workspace configuration remains the source of truth for app directories. Workspaces without a supported test script are ignored. Detection fails with an actionable error when no testable apps are found.
 
+### Testing shared libraries alongside apps
+
+Only workspaces under `apps/` are detected automatically. Shared libraries such as `libs/scout-ui` are opt-in: list their directories in **Additional workspaces** on the repository form, comma separated. They are then detected exactly like an app, including script selection, coverage reporting, per-app selection, and their own coverage snapshot.
+
+Inclusion is explicit rather than automatic so that adding a library to the repository never silently changes what a run tests. Two outcomes are deliberately different:
+
+- A directory that is not a pnpm workspace fails the run with an actionable error. Asking for something that cannot run is a configuration mistake, and failing quietly would leave you wondering why it never appeared.
+- A workspace whose test script is missing, or whose suite reports no tests at all (for example a package mid-migration running `--passWithNoTests`), is skipped without failing the run. Its applications are marked skipped and no coverage snapshot is written, so an empty suite never registers as 0% coverage.
+
 The form suggests `corepack enable && pnpm install --frozen-lockfile` as the setup command and `pnpm build` as the build command when auto-detection is enabled. A build failure skips all app tests so tests never run against missing workspace artifacts. Adjust either command when the repository uses a different bootstrap or build entry point.
 
 Example for a single Node app:
@@ -83,6 +92,8 @@ Supported coverage inputs:
 A run passes only when every app test exits successfully and every configured coverage report is present and valid. Coverage is still parsed after a failing test command when the report exists. Apps later in a monorepo continue after an earlier app fails.
 
 From the repository detail page, a multi-app run can target any subset of the configured or most recently detected apps. Use **Select failed** to quickly rerun only applications that failed the latest run. The selected app names are retained with the run, and auto-detected selections are checked again after cloning the requested ref. Run all apps once before using per-app selection on a newly configured auto-detected repository.
+
+The app results table shows how long each application took, rounded to the nearest second, alongside a breakdown of the run total into app time and the checkout, setup, and build phases. This makes it obvious when a single workspace dominates a run.
 
 The run detail page provides an expandable test-case readout for auto-detected Jest and Vitest apps. It records test names, source test files, durations, statuses, and bounded failure messages. For a manually configured command, QA Buddy will also consume a Jest-compatible JSON report written to `.qa-buddy-test-results.json` in the app working directory. Other test runners continue to use the full redacted log as their detailed readout.
 

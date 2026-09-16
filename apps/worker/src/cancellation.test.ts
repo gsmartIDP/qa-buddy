@@ -82,6 +82,7 @@ const repositoryInput: RepositoryInput = {
   githubUrl: "https://github.com/example/platform.git",
   defaultRef: "main",
   localPath: "platform",
+  additionalWorkspaces: [],
   runnerImage: "node:22-bookworm",
   testWorkerLimit: 2,
   timeoutMinutes: 30,

@@ -9,6 +9,7 @@ const input: RepositoryInput = {
   name: "Example platform",
   githubUrl: "https://github.com/example/platform.git",
   defaultRef: "main",
+  additionalWorkspaces: [],
   runnerImage: "node:22-bookworm",
   setupCommand: "npm ci",
   buildCommand: "npm run build",

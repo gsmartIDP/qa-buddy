@@ -36,6 +36,11 @@ export interface RepositoryInput {
    * the local working tree instead of a GitHub fetch.
    */
   localPath?: string;
+  /**
+   * Extra pnpm workspace directories to test alongside `apps/*` when
+   * auto-detection is on, for example `libs/scout-ui`. Opt-in only.
+   */
+  additionalWorkspaces: string[];
   runnerImage: string;
   setupCommand?: string;
   buildCommand?: string;
@@ -198,6 +203,11 @@ export interface Repository {
   githubUrl: string;
   defaultRef: string;
   localPath?: string;
+  /**
+   * Extra pnpm workspace directories to test alongside `apps/*` when
+   * auto-detection is on, for example `libs/scout-ui`. Opt-in only.
+   */
+  additionalWorkspaces: string[];
   runnerImage: string;
   setupCommand?: string;
   buildCommand?: string;

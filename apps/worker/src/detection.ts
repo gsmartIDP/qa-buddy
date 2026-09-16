@@ -125,7 +125,8 @@ function configuredJestCoveragePath(manifest: PackageManifest, directory: string
 
 export async function detectPnpmWorkspaceApps(
   repositoryDirectory: string,
-  testWorkerLimit = 2
+  testWorkerLimit = 2,
+  additionalWorkspaces: string[] = []
 ): Promise<WorkspaceDetectionResult> {
   const workspacePath = path.join(repositoryDirectory, "pnpm-workspace.yaml");
   if (!existsSync(workspacePath)) {
@@ -173,8 +174,24 @@ export async function detectPnpmWorkspaceApps(
     }
   });
 
-  const appManifests = manifests.some(({ directory }) => directory === "apps" || directory.startsWith("apps/"))
-    ? manifests.filter(({ directory }) => directory === "apps" || directory.startsWith("apps/"))
+  const inAppsGroup = (directory: string): boolean =>
+    directory === "apps" || directory.startsWith("apps/");
+
+  // Explicitly requested workspaces must exist. A directory that is not a pnpm
+  // workspace is a configuration mistake, so it fails the run rather than being
+  // quietly dropped; a workspace with no test script is skipped like any other.
+  const requested = Array.from(new Set(additionalWorkspaces.map((value) => value.replace(/\/+$/, ""))));
+  const knownDirectories = new Set(manifests.map(({ directory }) => directory));
+  const unknown = requested.filter((directory) => !knownDirectories.has(directory));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Additional workspaces not found in this repository: ${unknown.join(", ")}. Each must be a pnpm workspace directory with a package.json, such as libs/scout-ui`
+    );
+  }
+  const requestedSet = new Set(requested);
+
+  const appManifests = manifests.some(({ directory }) => inAppsGroup(directory))
+    ? manifests.filter(({ directory }) => inAppsGroup(directory) || requestedSet.has(directory))
     : manifests;
 
   const usedNames = new Set<string>();

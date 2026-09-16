@@ -1,6 +1,27 @@
 import type { AppRun, CoverageMetric } from "@qa-buddy/shared";
 import { StatusBadge } from "./StatusBadge";
 
+/** Elapsed milliseconds for a finished app run, or null while it is still going. */
+export function appRunDurationMs(app: AppRun): number | null {
+  if (!app.startedAt || !app.finishedAt) return null;
+  const elapsed = new Date(app.finishedAt).getTime() - new Date(app.startedAt).getTime();
+  return Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null;
+}
+
+/** Whole seconds is plenty: nobody perceives a test suite to sub-second accuracy. */
+export function formatDuration(milliseconds: number | null): string {
+  if (milliseconds === null) return "—";
+  const totalSeconds = Math.round(milliseconds / 1_000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  // Past an hour, round to the nearest minute rather than truncating, so the
+  // carry is handled (1h 59m 40s reads as 2h 00m, never 1h 60m).
+  const roundedMinutes = Math.round(totalSeconds / 60);
+  return `${Math.floor(roundedMinutes / 60)}h ${String(roundedMinutes % 60).padStart(2, "0")}m`;
+}
+
 function Metric({ value }: { value: CoverageMetric | null }) {
   if (!value) return <span className="metric-empty">N/A</span>;
   return (
@@ -33,6 +54,7 @@ export function CoverageTable({ appRuns, compact = false }: { appRuns: AppRun[];
             <th>App</th>
             <th>Status</th>
             {!compact && <th>Tests</th>}
+            <th>Duration</th>
             <th>Lines</th>
             <th>Statements</th>
             <th>Functions</th>
@@ -50,6 +72,7 @@ export function CoverageTable({ appRuns, compact = false }: { appRuns: AppRun[];
                 <StatusBadge status={app.status} />
               </td>
               {!compact && <td><TestSummary app={app} /></td>}
+              <td><span className="duration-value">{formatDuration(appRunDurationMs(app))}</span></td>
               <td>
                 <Metric value={app.coverage?.lines ?? null} />
               </td>

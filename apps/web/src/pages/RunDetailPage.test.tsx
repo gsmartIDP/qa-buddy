@@ -55,6 +55,7 @@ function runFixture(status: RunStatus = "passed", selectedApps: string[] | null 
       buildCommand: "pnpm build",
       testWorkerLimit: 2,
       timeoutMinutes: 30,
+      additionalWorkspaces: [],
       environmentAllowlist: [],
       autoDetect: true,
       apps: [],

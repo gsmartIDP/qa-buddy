@@ -154,6 +154,10 @@ const migrations = [
   {
     version: 8,
     sql: "ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;"
+  },
+  {
+    version: 9,
+    sql: "ALTER TABLE repositories ADD COLUMN additional_workspaces_json TEXT NOT NULL DEFAULT '[]';"
   }
 ] as const;
 
@@ -163,6 +167,7 @@ interface RepositoryRow {
   github_url: string;
   default_ref: string;
   local_path: string | null;
+  additional_workspaces_json: string;
   runner_image: string;
   setup_command: string | null;
   build_command: string | null;
@@ -385,6 +390,7 @@ export class QaBuddyDatabase {
       githubUrl: row.github_url,
       defaultRef: row.default_ref,
       localPath: row.local_path ?? undefined,
+      additionalWorkspaces: JSON.parse(row.additional_workspaces_json) as string[],
       runnerImage: row.runner_image,
       setupCommand: row.setup_command ?? undefined,
       buildCommand: row.build_command ?? undefined,
@@ -405,6 +411,7 @@ export class QaBuddyDatabase {
       githubUrl: repository.githubUrl,
       defaultRef: repository.defaultRef,
       localPath: repository.localPath,
+      additionalWorkspaces: repository.additionalWorkspaces,
       runnerImage: repository.runnerImage,
       setupCommand: repository.setupCommand,
       buildCommand: repository.buildCommand,
@@ -457,9 +464,9 @@ export class QaBuddyDatabase {
       this.connection
         .prepare(`
           INSERT INTO repositories(
-            id, name, github_url, default_ref, local_path, runner_image, setup_command,
+            id, name, github_url, default_ref, local_path, additional_workspaces_json, runner_image, setup_command,
             build_command, test_worker_limit, timeout_minutes, environment_allowlist_json, auto_detect, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -467,6 +474,7 @@ export class QaBuddyDatabase {
           input.githubUrl,
           input.defaultRef,
           input.localPath || null,
+          JSON.stringify(input.additionalWorkspaces ?? []),
           input.runnerImage,
           input.setupCommand || null,
           input.buildCommand || null,
@@ -489,7 +497,7 @@ export class QaBuddyDatabase {
       this.connection
         .prepare(`
           UPDATE repositories SET
-            name = ?, github_url = ?, default_ref = ?, local_path = ?, runner_image = ?, setup_command = ?,
+            name = ?, github_url = ?, default_ref = ?, local_path = ?, additional_workspaces_json = ?, runner_image = ?, setup_command = ?,
             build_command = ?, test_worker_limit = ?, timeout_minutes = ?, environment_allowlist_json = ?, auto_detect = ?, updated_at = ?
           WHERE id = ?
         `)
@@ -498,6 +506,7 @@ export class QaBuddyDatabase {
           input.githubUrl,
           input.defaultRef,
           input.localPath || null,
+          JSON.stringify(input.additionalWorkspaces ?? []),
           input.runnerImage,
           input.setupCommand || null,
           input.buildCommand || null,

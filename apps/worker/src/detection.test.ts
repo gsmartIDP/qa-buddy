@@ -284,4 +284,70 @@ describe("pnpm and Turborepo detection", () => {
     writeJson(path.join(directory, "apps/web/package.json"), { name: "web", scripts: { build: "vite build" } });
     await expect(detectPnpmWorkspaceApps(directory)).rejects.toThrow(/No coverage-capable test scripts/);
   });
+
+  describe("additional workspaces", () => {
+    function platformLayout(): void {
+      writeFileSync(
+        path.join(directory, "pnpm-workspace.yaml"),
+        "packages:\n  - 'apps/*'\n  - 'libs/*'\n",
+        "utf8"
+      );
+      writeJson(path.join(directory, "apps/idcloud/package.json"), {
+        name: "idcloud",
+        scripts: { "test:coverage": "vitest run --coverage" }
+      });
+      writeJson(path.join(directory, "libs/scout-ui/package.json"), {
+        name: "scout-ui",
+        scripts: { "test:coverage": "vitest run --coverage" }
+      });
+      writeJson(path.join(directory, "libs/infuse-ui/package.json"), {
+        name: "infuse-ui",
+        scripts: { coverage: "vitest run --coverage" }
+      });
+      // No test script at all: never eligible, listed or not.
+      writeJson(path.join(directory, "libs/typescript-config/package.json"), {
+        name: "typescript-config",
+        scripts: { lint: "eslint ." }
+      });
+    }
+
+    it("ignores libs unless they are explicitly requested", async () => {
+      platformLayout();
+      const result = await detectPnpmWorkspaceApps(directory, 2);
+      expect(result.apps.map((app) => app.workingDirectory)).toEqual(["apps/idcloud"]);
+    });
+
+    it("adds only the requested libs alongside every app", async () => {
+      platformLayout();
+      const result = await detectPnpmWorkspaceApps(directory, 2, ["libs/scout-ui"]);
+
+      expect(result.apps.map((app) => app.workingDirectory)).toEqual(["apps/idcloud", "libs/scout-ui"]);
+      const lib = result.apps.find((app) => app.workingDirectory === "libs/scout-ui");
+      expect(lib?.name).toBe("scout-ui");
+      expect(lib?.testCommand).toContain("pnpm run test:coverage");
+      expect(lib?.coveragePath).toBe("libs/scout-ui/coverage/coverage-summary.json");
+    });
+
+    it("tolerates a trailing slash and duplicate entries", async () => {
+      platformLayout();
+      const result = await detectPnpmWorkspaceApps(directory, 2, ["libs/scout-ui/", "libs/scout-ui"]);
+      expect(result.apps.filter((app) => app.workingDirectory === "libs/scout-ui")).toHaveLength(1);
+    });
+
+    it("fails loudly when a requested workspace does not exist", async () => {
+      platformLayout();
+      await expect(detectPnpmWorkspaceApps(directory, 2, ["libs/scout-uii"])).rejects.toThrow(
+        "Additional workspaces not found in this repository: libs/scout-uii"
+      );
+    });
+
+    it("skips a requested workspace that has no test script without failing", async () => {
+      platformLayout();
+      const result = await detectPnpmWorkspaceApps(directory, 2, ["libs/typescript-config", "libs/infuse-ui"]);
+      expect(result.apps.map((app) => app.workingDirectory)).toEqual([
+        "apps/idcloud",
+        "libs/infuse-ui"
+      ]);
+    });
+  });
 });

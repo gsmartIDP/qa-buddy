@@ -148,3 +148,58 @@ describe("local checkout path", () => {
     expect(runRequestSchema.parse({ useLocalWorkingTree: true }).useLocalWorkingTree).toBe(true);
   });
 });
+
+describe("additional workspaces", () => {
+  const base = {
+    name: "Example",
+    githubUrl: "https://github.com/example/repository",
+    defaultRef: "main",
+    runnerImage: "node:22-bookworm",
+    autoDetect: true,
+    apps: []
+  };
+
+  it("accepts relative workspace directories", () => {
+    const parsed = repositoryInputSchema.parse({
+      ...base,
+      additionalWorkspaces: ["libs/scout-ui", "libs/infuse-ui"]
+    });
+    expect(parsed.additionalWorkspaces).toEqual(["libs/scout-ui", "libs/infuse-ui"]);
+  });
+
+  it("defaults to none", () => {
+    expect(repositoryInputSchema.parse(base).additionalWorkspaces).toEqual([]);
+  });
+
+  it.each(["../escape", "/libs/scout-ui", "libs/../../escape"])("rejects %s", (workspace) => {
+    expect(
+      repositoryInputSchema.safeParse({ ...base, additionalWorkspaces: [workspace] }).success
+    ).toBe(false);
+  });
+
+  it("rejects duplicates", () => {
+    const result = repositoryInputSchema.safeParse({
+      ...base,
+      additionalWorkspaces: ["libs/scout-ui", "libs/scout-ui"]
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects additional workspaces when auto-detection is off", () => {
+    const result = repositoryInputSchema.safeParse({
+      ...base,
+      autoDetect: false,
+      apps: [
+        {
+          name: "Web",
+          workingDirectory: ".",
+          testCommand: "pnpm test",
+          coverageFormat: "istanbul-summary-json",
+          coveragePath: "coverage/coverage-summary.json"
+        }
+      ],
+      additionalWorkspaces: ["libs/scout-ui"]
+    });
+    expect(result.success).toBe(false);
+  });
+});
