@@ -33,6 +33,7 @@ export function RepositoryDetailPage() {
   const [groupName, setGroupName] = useState("");
   const [appliedGroupId, setAppliedGroupId] = useState<string | null>(null);
   const [groupBusy, setGroupBusy] = useState(false);
+  const [e2eRunning, setE2eRunning] = useState(false);
 
   useEffect(() => {
     api<{ repository: RepositoryDetail }>(`/api/repositories/${repositoryId}`)
@@ -44,8 +45,8 @@ export function RepositoryDetailPage() {
       .catch((caught: Error) => setError(caught.message));
   }, [repositoryId]);
 
-  const activeRun: RunSummary | undefined = repository?.runs.find((candidate) =>
-    activeRunStatuses.includes(candidate.status)
+  const activeRun: RunSummary | undefined = repository?.runs.find(
+    (candidate) => candidate.runType !== "e2e" && activeRunStatuses.includes(candidate.status)
   );
   const activeRunId = activeRun?.id;
 
@@ -136,6 +137,25 @@ export function RepositoryDetailPage() {
     }
   };
 
+  const startE2eRun = async () => {
+    setE2eRunning(true);
+    setError("");
+    try {
+      const response = await api<{ run: RunDetail }>(`/api/repositories/${repositoryId}/runs`, {
+        method: "POST",
+        body: JSON.stringify({
+          runType: "e2e",
+          ref: ref.trim() || undefined,
+          useLocalWorkingTree: useLocalWorkingTree || undefined
+        })
+      });
+      navigate(`/runs/${response.run.id}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to start the end-to-end run");
+      setE2eRunning(false);
+    }
+  };
+
   const startRun = async (event: FormEvent) => {
     event.preventDefault();
     setRunning(true);
@@ -173,6 +193,9 @@ export function RepositoryDetailPage() {
   if (!repository) return <Loading label="Loading repository…" />;
 
   const active = Boolean(activeRun);
+  const activeE2eRun = repository.runs.find(
+    (candidate) => candidate.runType === "e2e" && activeRunStatuses.includes(candidate.status)
+  );
   const selectableApps = repository.selectableApps;
   const latestStatus = new Map(repository.latestRun?.appRuns.map((app) => [app.name, app.status]) ?? []);
   const toggleApp = (name: string) => {
@@ -279,6 +302,31 @@ export function RepositoryDetailPage() {
               {running ? "Queueing…" : active ? "Run already active" : `Run ${selectedApps.length === selectableApps.length ? "all" : selectedApps.length} app${selectedApps.length === 1 ? "" : "s"} →`}
             </button>
           </div>
+          {repository.e2e.enabled && (
+            <div className="e2e-launch">
+              <div>
+                <strong>End-to-end suites</strong>
+                <small>
+                  {repository.e2e.apps.length} suite{repository.e2e.apps.length === 1 ? "" : "s"} on a separate
+                  queue, so this does not block unit runs.
+                </small>
+              </div>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={startE2eRun}
+                disabled={e2eRunning || Boolean(activeE2eRun)}
+                title={
+                  activeE2eRun
+                    ? "An end-to-end run is already in progress"
+                    : "Queue every configured end-to-end suite"
+                }
+              >
+                <Icon name="play" size={14} />
+                {e2eRunning ? "Queueing…" : activeE2eRun ? "End-to-end run active" : "Run end-to-end suites"}
+              </button>
+            </div>
+          )}
           {repository.localPath && (
             <label className="local-source-toggle">
               <input
@@ -514,7 +562,7 @@ export function RepositoryDetailPage() {
         <div className="panel-heading"><div><span className="eyebrow">Retained history</span><h2>Recent runs</h2></div><span className="muted">{repository.runs.length} retained runs</span></div>
         {repository.runs.length === 0 ? <p className="empty-copy">No runs yet. Start one above.</p> : (
           <div className="table-scroll"><table className="history-table"><thead><tr><th>Status</th><th>Ref</th><th>Commit</th><th>Apps</th><th>Started</th><th></th></tr></thead><tbody>
-            {repository.runs.map((run) => <tr key={run.id}><td><StatusBadge status={run.status} /></td><td><code>{run.useLocalWorkingTree ? "local working tree" : run.requestedRef}</code></td><td><code>{run.resolvedSha?.slice(0, 8) ?? "—"}{run.dirty ? "+dirty" : ""}</code></td><td>{run.selectedApps ? run.selectedApps.join(", ") : "All apps"}</td><td>{formatDate(run.startedAt ?? run.createdAt)}</td><td><Link to={`/runs/${run.id}`}>Details →</Link></td></tr>)}
+            {repository.runs.map((run) => <tr key={run.id}><td><StatusBadge status={run.status} /></td><td><code>{run.useLocalWorkingTree ? "local working tree" : run.requestedRef}</code>{run.runType === "e2e" && <> <span className="run-type-badge">e2e</span></>}</td><td><code>{run.resolvedSha?.slice(0, 8) ?? "—"}{run.dirty ? "+dirty" : ""}</code></td><td>{run.selectedApps ? run.selectedApps.join(", ") : "All apps"}</td><td>{formatDate(run.startedAt ?? run.createdAt)}</td><td><Link to={`/runs/${run.id}`}>Details →</Link></td></tr>)}
           </tbody></table></div>
         )}
       </section>

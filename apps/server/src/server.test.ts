@@ -274,4 +274,127 @@ describe("repository API", () => {
     const missing = await app.inject({ method: "PATCH", url: `/api/app-groups/${groupId}`, payload: { name: "X" } });
     expect(missing.statusCode).toBe(404);
   });
+
+  const e2eInput = {
+    ...input,
+    e2e: {
+      enabled: true,
+      runnerImage: "cypress/included:15.8.2",
+      timeoutMinutes: 90,
+      environmentAllowlist: ["CYPRESS_username"],
+      apps: [
+        {
+          name: "smoke",
+          workingDirectory: ".",
+          testCommand: "pnpm cy:smoke",
+          reportGlob: "results/*.xml"
+        }
+      ]
+    }
+  };
+
+  it("refuses an end-to-end run until suites are configured", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/runs`,
+      payload: { runType: "e2e" }
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error).toContain("end-to-end");
+  });
+
+  it("queues an end-to-end run alongside a unit run", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: e2eInput });
+    const repositoryId = created.json().repository.id as string;
+    expect(created.json().repository.e2e.apps).toHaveLength(1);
+
+    const unit = await app.inject({ method: "POST", url: `/api/repositories/${repositoryId}/runs`, payload: {} });
+    expect(unit.json().run.runType).toBe("unit");
+
+    // Different queue, so it is not blocked by the active unit run.
+    const e2e = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/runs`,
+      payload: { runType: "e2e" }
+    });
+    expect(e2e.statusCode).toBe(202);
+    expect(e2e.json().run.runType).toBe("e2e");
+    expect(e2e.json().run.appRuns.map((a: { name: string }) => a.name)).toEqual(["smoke"]);
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/runs`,
+      payload: { runType: "e2e" }
+    });
+    expect(duplicate.statusCode).toBe(409);
+  });
+
+  it("validates an end-to-end configuration before saving it", async () => {
+    const noImage = await app.inject({
+      method: "POST",
+      url: "/api/repositories",
+      payload: { ...e2eInput, e2e: { ...e2eInput.e2e, runnerImage: "" } }
+    });
+    expect(noImage.statusCode).toBe(400);
+
+    const noSuites = await app.inject({
+      method: "POST",
+      url: "/api/repositories",
+      payload: { ...e2eInput, e2e: { ...e2eInput.e2e, apps: [] } }
+    });
+    expect(noSuites.statusCode).toBe(400);
+
+    const reservedToken = await app.inject({
+      method: "POST",
+      url: "/api/repositories",
+      payload: { ...e2eInput, e2e: { ...e2eInput.e2e, environmentAllowlist: ["GITHUB_TOKEN"] } }
+    });
+    expect(reservedToken.statusCode).toBe(400);
+  });
+
+  it("lists and serves run artifacts, and refuses to escape the run directory", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: e2eInput });
+    const repositoryId = created.json().repository.id as string;
+    const queued = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/runs`,
+      payload: { runType: "e2e" }
+    });
+    const runId = queued.json().run.id as string;
+
+    const empty = await app.inject({ method: "GET", url: `/api/runs/${runId}/artifacts` });
+    expect(empty.json().artifacts).toEqual([]);
+
+    const suiteRoot = path.join(directory, "artifacts", runId, encodeURIComponent("smoke"));
+    mkdirSync(path.join(suiteRoot, "screenshots"), { recursive: true });
+    writeFileSync(path.join(suiteRoot, "screenshots/failed.png"), "image-bytes", "utf8");
+    writeFileSync(path.join(directory, "secret.txt"), "not an artifact", "utf8");
+
+    const listed = await app.inject({ method: "GET", url: `/api/runs/${runId}/artifacts` });
+    expect(listed.json().artifacts).toHaveLength(1);
+    expect(listed.json().artifacts[0].appName).toBe("smoke");
+    expect(listed.json().artifacts[0].path).toBe("smoke/screenshots/failed.png");
+
+    const served = await app.inject({
+      method: "GET",
+      url: `/api/runs/${runId}/artifacts/smoke/screenshots/failed.png`
+    });
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["content-type"]).toContain("image/png");
+    // Inline so a screenshot renders rather than downloading.
+    expect(served.headers["content-disposition"]).toContain("inline");
+    expect(served.body).toBe("image-bytes");
+
+    const escaped = await app.inject({
+      method: "GET",
+      url: `/api/runs/${runId}/artifacts/..%2f..%2fsecret.txt`
+    });
+    expect(escaped.statusCode).toBe(404);
+
+    const missingRun = await app.inject({ method: "GET", url: "/api/runs/nope/artifacts" });
+    expect(missingRun.statusCode).toBe(404);
+  });
 });

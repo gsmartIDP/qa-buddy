@@ -6,6 +6,7 @@ import {
   parseIstanbulReport,
   parseLcovReport,
   type AppRun,
+  type RunType,
   type CoverageFileEntry,
   type CoverageFormat,
   type CoverageSummary,
@@ -23,6 +24,8 @@ import {
 import { RunLogger } from "./logger.js";
 import { ProcessError } from "./process.js";
 import { readTestResults } from "./test-results.js";
+import { readJUnitResults } from "./junit.js";
+import { artifactDirectory, collectRunArtifacts } from "./artifacts.js";
 
 class SetupError extends Error {}
 class BuildError extends Error {}
@@ -44,6 +47,8 @@ export interface WorkerOptions {
   localSourceDirectory?: string;
   githubToken?: string;
   historyLimit: number;
+  /** Which queue this worker serves. A second worker runs the "e2e" lane. */
+  runType?: RunType;
   pollIntervalMs?: number;
   /** How often an in-flight run checks whether a stop has been requested. */
   cancellationPollMs?: number;
@@ -72,6 +77,30 @@ export function coverageSnapshotSkipReason(options: {
   return null;
 }
 
+/**
+ * Reports which allowlisted variables actually reached the runner. Values are
+ * never logged, only names.
+ */
+export function environmentPassThroughMessages(
+  allowlist: string[],
+  environment: Record<string, string>
+): string[] {
+  const requested = allowlist.filter((name) => name !== "GITHUB_TOKEN");
+  if (requested.length === 0) return [];
+
+  const provided = requested.filter((name) => environment[name] !== undefined);
+  const missing = requested.filter((name) => environment[name] === undefined);
+  const messages = [
+    `Environment pass-through: ${provided.length} of ${requested.length} allowlisted variable(s) provided${provided.length ? ` (${provided.join(", ")})` : ""}`
+  ];
+  if (missing.length > 0) {
+    messages.push(
+      `Allowlisted but not set in the worker environment, so not passed: ${missing.join(", ")}. Add them to .env and recreate the worker with "docker compose up -d --force-recreate worker".`
+    );
+  }
+  return messages;
+}
+
 export class QaBuddyWorker {
   private stopping = false;
   private activeRunner: DockerRunner | null = null;
@@ -89,7 +118,7 @@ export class QaBuddyWorker {
   async run(): Promise<void> {
     await this.initialize();
     while (!this.stopping) {
-      const run = this.options.database.claimNextRun();
+      const run = this.options.database.claimNextRun(this.options.runType ?? "unit");
       if (run) {
         await this.executeRun(run);
       } else {
@@ -111,9 +140,36 @@ export class QaBuddyWorker {
     return value;
   }
 
+  /** Image, commands, timeout and secrets all differ between the two run types. */
+  private runSettings(run: RunDetail): {
+    runnerImage: string;
+    setupCommand?: string;
+    buildCommand?: string;
+    timeoutMinutes: number;
+    environmentAllowlist: string[];
+  } {
+    const snapshot = run.configurationSnapshot;
+    if (run.runType === "e2e") {
+      return {
+        runnerImage: snapshot.e2e.runnerImage,
+        setupCommand: snapshot.e2e.setupCommand,
+        buildCommand: snapshot.e2e.buildCommand,
+        timeoutMinutes: snapshot.e2e.timeoutMinutes,
+        environmentAllowlist: snapshot.e2e.environmentAllowlist
+      };
+    }
+    return {
+      runnerImage: snapshot.runnerImage,
+      setupCommand: snapshot.setupCommand,
+      buildCommand: snapshot.buildCommand,
+      timeoutMinutes: snapshot.timeoutMinutes,
+      environmentAllowlist: snapshot.environmentAllowlist
+    };
+  }
+
   private runnerEnvironment(run: RunDetail): Record<string, string> {
     return Object.fromEntries(
-      run.configurationSnapshot.environmentAllowlist
+      this.runSettings(run).environmentAllowlist
         .filter((name) => name !== "GITHUB_TOKEN")
         .map((name) => [name, process.env[name]] as const)
         .filter((entry): entry is readonly [string, string] => entry[1] !== undefined)
@@ -240,7 +296,8 @@ export class QaBuddyWorker {
       ...Object.values(environment)
     ]);
     const runDirectory = this.safeRunDirectory(run.id);
-    const deadline = Date.now() + run.configurationSnapshot.timeoutMinutes * 60_000;
+    const settings = this.runSettings(run);
+    const deadline = Date.now() + settings.timeoutMinutes * 60_000;
     let repositoryDirectory = "";
     let appFailures = 0;
     let appRuns = run.appRuns;
@@ -263,7 +320,9 @@ export class QaBuddyWorker {
       if (cancelled) throw new RunCancelledError();
     };
 
-    logger.line(`Run ${run.id} queued for ${run.configurationSnapshot.githubUrl}`);
+    logger.line(
+      `${run.runType === "e2e" ? "End-to-end run" : "Run"} ${run.id} queued for ${run.configurationSnapshot.githubUrl}`
+    );
     logger.line(
       run.useLocalWorkingTree
         ? `Source: local working tree at ${run.configurationSnapshot.localPath}`
@@ -278,6 +337,14 @@ export class QaBuddyWorker {
     logger.line(githubRegistryAuthenticationMessage(process.env.GITHUB_IDP_REGISTRY));
     if (process.env.GITHUB_IDP_REGISTRY && !environment.GITHUB_IDP_REGISTRY) {
       logger.line("GITHUB_IDP_REGISTRY is not passed to this run; add it to the repository's environment allowlist to enable package authentication.");
+    }
+    // Names only: an allowlisted variable with no value in the worker is dropped
+    // silently, which is otherwise invisible until a test fails for odd reasons.
+    for (const line of environmentPassThroughMessages(
+      run.configurationSnapshot.environmentAllowlist,
+      environment
+    )) {
+      logger.line(line);
     }
 
     try {
@@ -306,7 +373,7 @@ export class QaBuddyWorker {
           : `Resolved commit: ${source.resolvedSha}`
       );
 
-      if (run.configurationSnapshot.autoDetect) {
+      if (run.runType === "unit" && run.configurationSnapshot.autoDetect) {
         const detection = await detectPnpmWorkspaceApps(
           repositoryDirectory,
           run.configurationSnapshot.testWorkerLimit,
@@ -328,7 +395,7 @@ export class QaBuddyWorker {
       const workspaceContainerPath = `/workspaces/${run.id}/repo`;
       this.activeRunner = new DockerRunner(this.options.docker, {
         runId: run.id,
-        image: run.configurationSnapshot.runnerImage,
+        image: settings.runnerImage,
         workspaceVolume: this.options.workspaceVolume,
         workspaceContainerPath,
         environment,
@@ -336,11 +403,11 @@ export class QaBuddyWorker {
       });
       await this.activeRunner.start(this.remaining(deadline));
 
-      if (run.configurationSnapshot.setupCommand) {
+      if (settings.setupCommand) {
         this.options.database.updateRun(run.id, { status: "setup" });
         logger.line("Running repository setup");
         const setup = await this.activeRunner.exec(
-          run.configurationSnapshot.setupCommand,
+          settings.setupCommand,
           workspaceContainerPath,
           this.remaining(deadline)
         );
@@ -350,11 +417,11 @@ export class QaBuddyWorker {
         }
       }
 
-      if (run.configurationSnapshot.buildCommand) {
+      if (settings.buildCommand) {
         this.options.database.updateRun(run.id, { status: "building" });
         logger.line("Building repository before tests");
         const build = await this.activeRunner.exec(
-          run.configurationSnapshot.buildCommand,
+          settings.buildCommand,
           workspaceContainerPath,
           this.remaining(deadline)
         );
@@ -378,7 +445,11 @@ export class QaBuddyWorker {
         let testResults: TestResults | null = null;
         let testResultsError: string | null = null;
         try {
-          clearAppReports(repositoryDirectory, appRun.workingDirectory, appRun.coveragePath);
+          // Coverage report cleanup is unit-specific; an end-to-end suite's
+          // report path is a glob, not a known coverage filename.
+          if (run.runType === "unit") {
+            clearAppReports(repositoryDirectory, appRun.workingDirectory, appRun.coveragePath);
+          }
           const result = await this.activeRunner.exec(
             appRun.testCommand,
             path.posix.join(workspaceContainerPath, appRun.workingDirectory),
@@ -386,6 +457,20 @@ export class QaBuddyWorker {
           );
           ensureRunning();
           exitCode = result.exitCode;
+
+          if (run.runType === "e2e") {
+            // End-to-end suites report through JUnit XML and produce no coverage.
+            try {
+              const junit = await readJUnitResults(repositoryDirectory, appRun.coveragePath);
+              testResults = junit.results;
+              logger.line(
+                `${appRun.name} test cases: ${junit.results.passed} passed, ${junit.results.failed} failed, ${junit.results.skipped} skipped across ${junit.files.length} report file${junit.files.length === 1 ? "" : "s"}`
+              );
+            } catch (error) {
+              testResultsError = error instanceof Error ? error.message : "Unable to read the JUnit report";
+              logger.line(`${appRun.name} report error: ${testResultsError}`);
+            }
+          } else {
           try {
             testResults = readTestResults(repositoryDirectory, appRun.workingDirectory);
             if (testResults) {
@@ -415,10 +500,33 @@ export class QaBuddyWorker {
             coverageError = error instanceof Error ? error.message : "Unable to parse coverage report";
             logger.line(`${appRun.name} coverage error: ${coverageError}`);
           }
+          }
         } catch (error) {
           if (error instanceof RunnerTimeoutError || error instanceof RunCancelledError) throw error;
           coverageError = error instanceof Error ? error.message : "Test command failed to execute";
           logger.line(`${appRun.name} command error: ${coverageError}`);
+        }
+
+        if (run.runType === "e2e") {
+          const globs = run.configurationSnapshot.e2e.apps.find(
+            (candidate) => candidate.name === appRun.name
+          )?.artifactGlobs;
+          if (globs?.length) {
+            try {
+              await collectRunArtifacts({
+                repositoryDirectory,
+                dataDirectory: this.options.dataDirectory,
+                runId: run.id,
+                appName: appRun.name,
+                globs,
+                logger
+              });
+            } catch (error) {
+              logger.line(
+                `Unable to keep artifacts for ${appRun.name}: ${error instanceof Error ? error.message : "unknown error"}`
+              );
+            }
+          }
         }
 
         // A suite that ran cleanly with nothing to run (for example a package
@@ -438,7 +546,9 @@ export class QaBuddyWorker {
           continue;
         }
 
-        const passed = exitCode === 0 && coverage !== null;
+        // An end-to-end suite has no coverage; a parsed report is its evidence.
+        const passed =
+          run.runType === "e2e" ? exitCode === 0 && testResults !== null : exitCode === 0 && coverage !== null;
         if (!passed) appFailures += 1;
         this.recordCoverageSnapshot(run, appRun, logger, source.resolvedSha, {
           coverage,
@@ -454,7 +564,17 @@ export class QaBuddyWorker {
           coveragePath,
           testResults,
           testResultsError,
-          coverageError: coverageError ?? (exitCode === 0 ? null : `Test command exited with code ${exitCode}`)
+          // A non-zero exit is the primary fact: a missing report is usually its
+          // consequence, and leading with the report hides why the command failed.
+          coverageError:
+            exitCode === 0
+              ? (run.runType === "e2e" ? testResultsError : coverageError)
+              : [
+                  `Test command exited with code ${exitCode}`,
+                  run.runType === "e2e" ? testResultsError : coverageError
+                ]
+                  .filter(Boolean)
+                  .join("; ")
         });
       }
 
@@ -506,6 +626,7 @@ export class QaBuddyWorker {
       const removedRunIds = this.options.database.pruneRuns(run.repositoryId, this.options.historyLimit);
       for (const runId of removedRunIds) {
         rmSync(path.join(this.options.dataDirectory, "logs", `${runId}.log`), { force: true });
+        rmSync(artifactDirectory(this.options.dataDirectory, runId), { recursive: true, force: true });
       }
     }
   }

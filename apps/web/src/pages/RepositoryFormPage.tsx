@@ -25,7 +25,8 @@ const initialValue: RepositoryInput = {
   timeoutMinutes: 30,
   environmentAllowlist: [],
   autoDetect: false,
-  apps: [emptyApp()]
+  apps: [emptyApp()],
+  e2e: { enabled: false, runnerImage: "", timeoutMinutes: 60, environmentAllowlist: [], apps: [] }
 };
 
 export function RepositoryFormPage() {
@@ -34,6 +35,7 @@ export function RepositoryFormPage() {
   const [value, setValue] = useState<RepositoryInput>(initialValue);
   const [environmentNames, setEnvironmentNames] = useState("");
   const [workspaceNames, setWorkspaceNames] = useState("");
+  const [e2eEnvironmentNames, setE2eEnvironmentNames] = useState("");
   const [loading, setLoading] = useState(Boolean(repositoryId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -55,10 +57,12 @@ export function RepositoryFormPage() {
           timeoutMinutes: repository.timeoutMinutes,
           environmentAllowlist: repository.environmentAllowlist,
           autoDetect: repository.autoDetect,
+          e2e: repository.e2e,
           apps: repository.apps.map(({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app)
         });
         setEnvironmentNames(repository.environmentAllowlist.join(", "));
         setWorkspaceNames((repository.additionalWorkspaces ?? []).join(", "));
+        setE2eEnvironmentNames((repository.e2e?.environmentAllowlist ?? []).join(", "));
       })
       .catch((caught: Error) => setError(caught.message))
       .finally(() => setLoading(false));
@@ -82,6 +86,13 @@ export function RepositoryFormPage() {
         .split(",")
         .map((name) => name.trim())
         .filter(Boolean),
+      e2e: {
+        ...value.e2e,
+        environmentAllowlist: e2eEnvironmentNames
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean)
+      },
       additionalWorkspaces: value.autoDetect
         ? workspaceNames
             .split(",")
@@ -104,6 +115,13 @@ export function RepositoryFormPage() {
       setSaving(false);
     }
   };
+
+
+  const e2e = value.e2e;
+  const setE2e = (changes: Partial<RepositoryInput["e2e"]>) =>
+    setValue((current) => ({ ...current, e2e: { ...current.e2e, ...changes } }));
+  const updateE2eApp = (index: number, changes: Partial<RepositoryInput["e2e"]["apps"][number]>) =>
+    setE2e({ apps: e2e.apps.map((app, position) => (position === index ? { ...app, ...changes } : app)) });
 
   if (loading) return <Loading label="Loading repository configuration…" />;
 
@@ -405,6 +423,204 @@ export function RepositoryFormPage() {
               </fieldset>
               ))}
             </div>
+          )}
+        </section>
+
+        <section className="panel form-section">
+          <div className="section-heading">
+            <span className="section-number">04</span>
+            <div>
+              <h2>End-to-end suites</h2>
+              <p>
+                Browser suites run in their own image, on their own queue, and report through JUnit XML instead
+                of coverage. They never block a unit run.
+              </p>
+            </div>
+          </div>
+
+          <label className="auto-detect-toggle">
+            <input
+              type="checkbox"
+              checked={e2e.enabled}
+              onChange={(event) =>
+                setE2e({
+                  enabled: event.target.checked,
+                  runnerImage:
+                    event.target.checked && !e2e.runnerImage ? "cypress/included:15.8.2" : e2e.runnerImage,
+                  // Browser images ship Node but not pnpm, and corepack needs the
+                  // prompt disabled because the runner has no TTY.
+                  setupCommand:
+                    event.target.checked && !e2e.setupCommand
+                      ? "COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile"
+                      : e2e.setupCommand
+                })
+              }
+            />
+            <span>
+              <strong>Enable end-to-end runs</strong>
+              <small>
+                Adds a separate run button on the repository page. Suites are always configured explicitly;
+                there is no auto-detection.
+              </small>
+            </span>
+          </label>
+
+          {e2e.enabled && (
+            <>
+              <div className="field-grid two-column">
+                <label>
+                  <span>Runner image</span>
+                  <input
+                    value={e2e.runnerImage}
+                    onChange={(event) => setE2e({ runnerImage: event.target.value })}
+                    placeholder="cypress/included:15.8.2"
+                  />
+                  <small>
+                    Must include a browser. The tag has to match the Cypress version your lockfile resolves, or
+                    the binary will be missing.
+                  </small>
+                </label>
+                <label>
+                  <span>Timeout (minutes)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={240}
+                    value={e2e.timeoutMinutes}
+                    onChange={(event) => setE2e({ timeoutMinutes: Number(event.target.value) })}
+                  />
+                  <small>Browser suites are slow; up to 240 minutes is allowed.</small>
+                </label>
+                <label className="field-span">
+                  <span>Setup command</span>
+                  <input
+                    value={e2e.setupCommand ?? ""}
+                    onChange={(event) => setE2e({ setupCommand: event.target.value })}
+                    placeholder="COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile"
+                  />
+                  <small>Browser images ship Node but not pnpm, so corepack has to enable it first.</small>
+                </label>
+                <label className="field-span">
+                  <span>Build command</span>
+                  <input
+                    value={e2e.buildCommand ?? ""}
+                    onChange={(event) => setE2e({ buildCommand: event.target.value })}
+                    placeholder="pnpm build"
+                  />
+                </label>
+                <label className="field-span">
+                  <span>Allowed environment variable names</span>
+                  <input
+                    value={e2eEnvironmentNames}
+                    onChange={(event) => setE2eEnvironmentNames(event.target.value)}
+                    placeholder="CYPRESS_CLERK_SECRET_KEY, CYPRESS_adminEmail"
+                  />
+                  <small>
+                    Separate from the unit allowlist, since end-to-end suites need credentials a unit run never
+                    sees. Values live in <code>.env</code>; only names go here.
+                  </small>
+                </label>
+              </div>
+
+              <div className="app-form-list">
+                {e2e.apps.map((app, index) => (
+                  <fieldset className="app-form" key={index}>
+                    <legend>Suite {index + 1}</legend>
+                    {e2e.apps.length > 0 && (
+                      <button
+                        type="button"
+                        className="text-button danger app-remove"
+                        onClick={() => setE2e({ apps: e2e.apps.filter((_, position) => position !== index) })}
+                      >
+                        Remove
+                      </button>
+                    )}
+                    <div className="field-grid two-column">
+                      <label>
+                        <span>Suite name</span>
+                        <input
+                          value={app.name}
+                          onChange={(event) => updateE2eApp(index, { name: event.target.value })}
+                          placeholder="idinspect smoke"
+                        />
+                      </label>
+                      <label>
+                        <span>Working directory</span>
+                        <input
+                          value={app.workingDirectory}
+                          onChange={(event) => updateE2eApp(index, { workingDirectory: event.target.value })}
+                          placeholder="."
+                        />
+                        <small>Use <code>.</code> to run from the repository root.</small>
+                      </label>
+                      <label className="field-span">
+                        <span>Test command</span>
+                        <input
+                          value={app.testCommand}
+                          onChange={(event) => updateE2eApp(index, { testCommand: event.target.value })}
+                          placeholder="pnpm --filter app exec cypress run --reporter junit ..."
+                        />
+                        <small>
+                          Start any servers the suite needs in this command; it runs through a shell.
+                        </small>
+                      </label>
+                      <label className="field-span">
+                        <span>Artifacts to keep (optional)</span>
+                        <input
+                          value={(app.artifactGlobs ?? []).join(", ")}
+                          onChange={(event) =>
+                            updateE2eApp(index, {
+                              artifactGlobs: event.target.value
+                                .split(",")
+                                .map((entry) => entry.trim())
+                                .filter(Boolean)
+                            })
+                          }
+                          placeholder="apps/idinspect/cypress/screenshots/**, apps/idinspect/cypress/videos/**"
+                        />
+                        <small>
+                          Comma-separated globs from the repository root. These are copied out before the
+                          checkout is deleted, and are kept for as long as the run itself.
+                        </small>
+                      </label>
+                      <label className="field-span">
+                        <span>JUnit report path</span>
+                        <input
+                          value={app.reportGlob}
+                          onChange={(event) => updateE2eApp(index, { reportGlob: event.target.value })}
+                          placeholder="apps/idinspect/results/*.xml"
+                        />
+                        <small>
+                          A glob relative to the repository root. Cypress writes one file per spec; every match
+                          is merged.
+                        </small>
+                      </label>
+                    </div>
+                  </fieldset>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() =>
+                  setE2e({
+                    apps: [
+                      ...e2e.apps,
+                      {
+                        name: "",
+                        workingDirectory: ".",
+                        testCommand: "",
+                        reportGlob: "results/*.xml",
+                        artifactGlobs: []
+                      }
+                    ]
+                  })
+                }
+              >
+                + Add a suite
+              </button>
+            </>
           )}
         </section>
 

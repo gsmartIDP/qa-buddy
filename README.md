@@ -163,6 +163,41 @@ While a run is active the repository page refreshes every two seconds; the run d
 
 Stopped runs never update a coverage snapshot, since their apps did not finish.
 
+## End-to-end suites
+
+Cypress and Playwright suites run as a separate kind of run, with their own image, commands, secrets, timeout and queue. Nothing about the unit path changes.
+
+Enable **End-to-end runs** on the repository form and add one suite per entry:
+
+- **Runner image** must include a browser, for example `cypress/included:15.8.2`. The tag has to match the Cypress version your lockfile resolves to; an image built for a different version has no matching binary and the run fails with "the Cypress binary is missing".
+- **Test command** runs through a shell, so start whatever servers the suite needs in the same command. There is no auto-detection: browser suites are always configured explicitly, because a repository usually has several (smoke, regression, component) with different runtimes.
+- **JUnit report path** is a glob relative to the repository root. Cypress writes one file per spec and every match is merged, so `apps/idinspect/results/*.xml` is the usual shape. Playwright's built-in JUnit reporter works the same way.
+- **Allowed environment variable names** is separate from the unit allowlist, because end-to-end suites need credentials a unit run never sees.
+
+An end-to-end run passes when every suite exits successfully and produces a readable JUnit report. Coverage is not collected or required, and no coverage snapshot is written.
+
+### Artifacts
+
+Add globs to **Artifacts to keep** and those files are copied out of the checkout as each suite finishes, before the workspace is deleted, and shown on the run detail page. Screenshots render inline; anything else is a download.
+
+```text
+apps/idinspect/cypress/screenshots/**, apps/idinspect/cypress/videos/**
+```
+
+Artifacts live beside run logs in the data volume and are removed with the run they belong to, so history pruning and repository deletion clean them up. Each suite is capped at 500 files and 250 MB; anything beyond that is skipped and reported in the run log.
+
+Screenshots are the reliable artifact. Cypress finalizes video as a run ends, and a suite that is stopped, times out, or whose container is torn down mid-write leaves a truncated file that no player can open — the MP4 index is written last. Prefer screenshots for diagnosis and treat video as a bonus.
+
+### Separate queues
+
+End-to-end runs are served by their own worker (`worker-e2e` in Compose, `QA_BUDDY_RUN_TYPE=e2e`). Each worker claims only its own kind of run, so a long browser suite never delays unit runs, and one run of each kind can be active for the same repository at the same time.
+
+Both workers share one Docker host. Browser suites are memory-hungry, so raise Docker's memory allocation before relying on the two running together.
+
+### What the suite has to provide
+
+QA Buddy serves the repository's own code and nothing else. A suite that authenticates against a backend needs those services reachable — either deployed, or started by the test command. Running an application's full backend stack inside the runner is out of scope; point the front-end at a deployed environment instead, by passing the relevant `VITE_*` or equivalent variables through the environment allowlist.
+
 ## Coverage gaps
 
 Every run that uses a GitHub ref records a per-file coverage snapshot for each app that produced a report. Open **Coverage gaps** from the repository page to rank files by their weakest metric.
@@ -209,13 +244,14 @@ Useful endpoints:
 - `GET|POST /api/repositories/:repositoryId/app-groups`
 - `PATCH|DELETE /api/app-groups/:groupId`
 - `GET|PATCH|DELETE /api/repositories/:repositoryId`
-- `POST /api/repositories/:repositoryId/runs`
+- `POST /api/repositories/:repositoryId/runs` (`runType` selects the unit or end-to-end queue)
 - `GET /api/repositories/:repositoryId/runs`
 - `GET /api/repositories/:repositoryId/coverage` (per-app snapshot metadata)
 - `GET /api/repositories/:repositoryId/coverage/files` (ranked per-file coverage; `app`, `metric`, `maxPercent`, `search`, `limit`, `offset`)
 - `GET /api/runs/:runId`
 - `POST /api/runs/:runId/cancel` (stop a queued or in-flight run)
 - `GET /api/runs/:runId/log` (full redacted log download)
+- `GET /api/runs/:runId/artifacts` and `GET /api/runs/:runId/artifacts/*` (kept end-to-end artifacts)
 - `GET /api/runs/:runId/events` (server-sent events)
 
 The latest 20 runs per repository are retained by default. Override this with `RUN_HISTORY_LIMIT`.

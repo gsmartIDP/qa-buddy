@@ -17,6 +17,7 @@ const input: RepositoryInput = {
   timeoutMinutes: 30,
   environmentAllowlist: ["NPM_TOKEN"],
   autoDetect: false,
+  e2e: { enabled: false, runnerImage: "", timeoutMinutes: 60, environmentAllowlist: [], apps: [] },
   apps: [
     {
       name: "Web",
@@ -438,5 +439,85 @@ describe("QaBuddyDatabase", () => {
     database.createAppGroup(repository.id, { name: "Nightly", appNames: ["Web"] });
     database.deleteRepository(repository.id);
     expect(database.listAppGroups(repository.id)).toEqual([]);
+  });
+  const withE2e = {
+    ...input,
+    e2e: {
+      enabled: true,
+      runnerImage: "cypress/included:15.8.2",
+      setupCommand: "pnpm install",
+      buildCommand: "pnpm build",
+      timeoutMinutes: 90,
+      environmentAllowlist: ["CYPRESS_username"],
+      apps: [
+        {
+          name: "idinspect smoke",
+          workingDirectory: ".",
+          testCommand: "pnpm cy:smoke",
+          reportGlob: "apps/idinspect/results/*.xml",
+          artifactGlobs: []
+        }
+      ]
+    }
+  };
+
+  it("stores an end-to-end configuration separately from the unit one", () => {
+    const repository = database.createRepository(withE2e);
+
+    expect(repository.e2e.enabled).toBe(true);
+    expect(repository.e2e.runnerImage).toBe("cypress/included:15.8.2");
+    expect(repository.e2e.timeoutMinutes).toBe(90);
+    expect(repository.e2e.apps).toHaveLength(1);
+    expect(repository.e2e.apps[0]?.reportGlob).toBe("apps/idinspect/results/*.xml");
+    // The unit configuration is untouched.
+    expect(repository.runnerImage).toBe("node:22-bookworm");
+    expect(repository.apps).toHaveLength(2);
+  });
+
+  it("builds end-to-end runs from the e2e suites, not the unit apps", () => {
+    const repository = database.createRepository(withE2e);
+    const run = database.createRun(repository.id, "main", undefined, false, "e2e");
+
+    expect(run.runType).toBe("e2e");
+    expect(run.appRuns.map((app) => app.name)).toEqual(["idinspect smoke"]);
+    expect(run.configurationSnapshot.e2e.runnerImage).toBe("cypress/included:15.8.2");
+  });
+
+  it("refuses an end-to-end run when the repository has none configured", () => {
+    const repository = database.createRepository(input);
+    expect(() => database.createRun(repository.id, "main", undefined, false, "e2e")).toThrow(
+      "not enabled"
+    );
+  });
+
+  it("lets one unit run and one end-to-end run be active at the same time", () => {
+    const repository = database.createRepository(withE2e);
+
+    const unit = database.createRun(repository.id, "main");
+    const e2e = database.createRun(repository.id, "main", undefined, false, "e2e");
+    expect(unit.runType).toBe("unit");
+    expect(e2e.runType).toBe("e2e");
+
+    // A second run of either type is still refused while one is active.
+    expect(() => database.createRun(repository.id, "main")).toThrow("already has");
+    expect(() => database.createRun(repository.id, "main", undefined, false, "e2e")).toThrow(
+      "end-to-end job"
+    );
+  });
+
+  it("claims runs only from its own lane", () => {
+    const repository = database.createRepository(withE2e);
+    const e2e = database.createRun(repository.id, "main", undefined, false, "e2e");
+    const unit = database.createRun(repository.id, "main");
+
+    // The e2e run was queued first, but a unit worker must not take it.
+    const claimedUnit = database.claimNextRun("unit");
+    expect(claimedUnit?.id).toBe(unit.id);
+
+    const claimedE2e = database.claimNextRun("e2e");
+    expect(claimedE2e?.id).toBe(e2e.id);
+
+    expect(database.claimNextRun("unit")).toBeNull();
+    expect(database.claimNextRun("e2e")).toBeNull();
   });
 });

@@ -8,6 +8,9 @@ import type {
   AppGroupInput,
   AppRun,
   AppRunStatus,
+  E2eAppConfiguration,
+  E2eConfig,
+  RunType,
   CoverageFileEntry,
   CoverageFilePage,
   CoverageFileQuery,
@@ -176,6 +179,36 @@ const migrations = [
 
       CREATE INDEX app_groups_repository_idx ON app_groups(repository_id, name COLLATE NOCASE);
     `
+  },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE runs ADD COLUMN run_type TEXT NOT NULL DEFAULT 'unit';
+
+      ALTER TABLE repositories ADD COLUMN e2e_enabled INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE repositories ADD COLUMN e2e_runner_image TEXT NOT NULL DEFAULT '';
+      ALTER TABLE repositories ADD COLUMN e2e_setup_command TEXT;
+      ALTER TABLE repositories ADD COLUMN e2e_build_command TEXT;
+      ALTER TABLE repositories ADD COLUMN e2e_timeout_minutes INTEGER NOT NULL DEFAULT 60;
+      ALTER TABLE repositories ADD COLUMN e2e_environment_allowlist_json TEXT NOT NULL DEFAULT '[]';
+
+      CREATE TABLE e2e_apps (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        working_directory TEXT NOT NULL,
+        test_command TEXT NOT NULL,
+        report_glob TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        UNIQUE(repository_id, name COLLATE NOCASE)
+      );
+
+      CREATE INDEX runs_type_status_idx ON runs(run_type, status, created_at ASC);
+    `
+  },
+  {
+    version: 12,
+    sql: "ALTER TABLE e2e_apps ADD COLUMN artifact_globs_json TEXT NOT NULL DEFAULT '[]';"
   }
 ] as const;
 
@@ -193,6 +226,12 @@ interface RepositoryRow {
   timeout_minutes: number;
   environment_allowlist_json: string;
   auto_detect: number;
+  e2e_enabled: number;
+  e2e_runner_image: string;
+  e2e_setup_command: string | null;
+  e2e_build_command: string | null;
+  e2e_timeout_minutes: number;
+  e2e_environment_allowlist_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -212,6 +251,7 @@ interface RunRow {
   id: string;
   repository_id: string;
   requested_ref: string;
+  run_type: RunType;
   resolved_sha: string | null;
   use_local_working_tree: number;
   dirty: number;
@@ -241,6 +281,17 @@ interface AppRunRow {
   test_results_error: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+interface E2eAppRow {
+  id: string;
+  repository_id: string;
+  name: string;
+  working_directory: string;
+  test_command: string;
+  report_glob: string;
+  artifact_globs_json: string;
+  position: number;
 }
 
 interface AppGroupRow {
@@ -346,6 +397,36 @@ export class QaBuddyDatabase {
     }));
   }
 
+  private e2eAppsForRepository(repositoryId: string): E2eAppConfiguration[] {
+    const rows = this.connection
+      .prepare("SELECT * FROM e2e_apps WHERE repository_id = ? ORDER BY position ASC")
+      .all(repositoryId) as E2eAppRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      repositoryId: row.repository_id,
+      name: row.name,
+      workingDirectory: row.working_directory,
+      testCommand: row.test_command,
+      reportGlob: row.report_glob,
+      artifactGlobs: JSON.parse(row.artifact_globs_json) as string[],
+      position: row.position
+    }));
+  }
+
+  private e2eConfigForRepository(row: RepositoryRow): E2eConfig {
+    return {
+      enabled: row.e2e_enabled === 1,
+      runnerImage: row.e2e_runner_image,
+      setupCommand: row.e2e_setup_command ?? undefined,
+      buildCommand: row.e2e_build_command ?? undefined,
+      timeoutMinutes: row.e2e_timeout_minutes,
+      environmentAllowlist: JSON.parse(row.e2e_environment_allowlist_json) as string[],
+      apps: this.e2eAppsForRepository(row.id).map(
+        ({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app
+      )
+    };
+  }
+
   private appRunsForRun(runId: string): AppRun[] {
     const rows = this.connection
       .prepare("SELECT * FROM app_runs WHERE run_id = ? ORDER BY position ASC")
@@ -383,6 +464,7 @@ export class QaBuddyDatabase {
       id: row.id,
       repositoryId: row.repository_id,
       requestedRef: row.requested_ref,
+      runType: row.run_type,
       resolvedSha: row.resolved_sha,
       useLocalWorkingTree: row.use_local_working_tree === 1,
       dirty: row.dirty === 1,
@@ -426,6 +508,7 @@ export class QaBuddyDatabase {
       environmentAllowlist: JSON.parse(row.environment_allowlist_json) as string[],
       autoDetect: row.auto_detect === 1,
       apps: this.appsForRepository(row.id),
+      e2e: this.e2eConfigForRepository(row),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       latestRun: this.latestRunForRepository(row.id)
@@ -446,7 +529,8 @@ export class QaBuddyDatabase {
       timeoutMinutes: repository.timeoutMinutes,
       environmentAllowlist: repository.environmentAllowlist,
       autoDetect: repository.autoDetect,
-      apps: repository.apps.map(({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app)
+      apps: repository.apps.map(({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app),
+      e2e: repository.e2e
     };
   }
 
@@ -497,8 +581,10 @@ export class QaBuddyDatabase {
         .prepare(`
           INSERT INTO repositories(
             id, name, github_url, default_ref, local_path, additional_workspaces_json, runner_image, setup_command,
-            build_command, test_worker_limit, timeout_minutes, environment_allowlist_json, auto_detect, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            build_command, test_worker_limit, timeout_minutes, environment_allowlist_json, auto_detect,
+            e2e_enabled, e2e_runner_image, e2e_setup_command, e2e_build_command, e2e_timeout_minutes,
+            e2e_environment_allowlist_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -514,10 +600,17 @@ export class QaBuddyDatabase {
           input.timeoutMinutes,
           JSON.stringify(input.environmentAllowlist),
           input.autoDetect ? 1 : 0,
+          input.e2e.enabled ? 1 : 0,
+          input.e2e.runnerImage,
+          input.e2e.setupCommand || null,
+          input.e2e.buildCommand || null,
+          input.e2e.timeoutMinutes,
+          JSON.stringify(input.e2e.environmentAllowlist),
           timestamp,
           timestamp
         );
       this.insertApps(id, input);
+      this.insertE2eApps(id, input);
     })();
     return this.getRepository(id)!;
   }
@@ -530,7 +623,9 @@ export class QaBuddyDatabase {
         .prepare(`
           UPDATE repositories SET
             name = ?, github_url = ?, default_ref = ?, local_path = ?, additional_workspaces_json = ?, runner_image = ?, setup_command = ?,
-            build_command = ?, test_worker_limit = ?, timeout_minutes = ?, environment_allowlist_json = ?, auto_detect = ?, updated_at = ?
+            build_command = ?, test_worker_limit = ?, timeout_minutes = ?, environment_allowlist_json = ?, auto_detect = ?,
+            e2e_enabled = ?, e2e_runner_image = ?, e2e_setup_command = ?, e2e_build_command = ?,
+            e2e_timeout_minutes = ?, e2e_environment_allowlist_json = ?, updated_at = ?
           WHERE id = ?
         `)
         .run(
@@ -546,13 +641,41 @@ export class QaBuddyDatabase {
           input.timeoutMinutes,
           JSON.stringify(input.environmentAllowlist),
           input.autoDetect ? 1 : 0,
+          input.e2e.enabled ? 1 : 0,
+          input.e2e.runnerImage,
+          input.e2e.setupCommand || null,
+          input.e2e.buildCommand || null,
+          input.e2e.timeoutMinutes,
+          JSON.stringify(input.e2e.environmentAllowlist),
           timestamp,
           id
         );
       this.connection.prepare("DELETE FROM apps WHERE repository_id = ?").run(id);
       this.insertApps(id, input);
+      this.connection.prepare("DELETE FROM e2e_apps WHERE repository_id = ?").run(id);
+      this.insertE2eApps(id, input);
     })();
     return this.getRepository(id);
+  }
+
+  private insertE2eApps(repositoryId: string, input: RepositoryInput): void {
+    const statement = this.connection.prepare(`
+      INSERT INTO e2e_apps(
+        id, repository_id, name, working_directory, test_command, report_glob, artifact_globs_json, position
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    input.e2e.apps.forEach((app, position) => {
+      statement.run(
+        randomUUID(),
+        repositoryId,
+        app.name,
+        app.workingDirectory,
+        app.testCommand,
+        app.reportGlob,
+        JSON.stringify(app.artifactGlobs ?? []),
+        position
+      );
+    });
   }
 
   private insertApps(repositoryId: string, input: RepositoryInput): void {
@@ -595,36 +718,54 @@ export class QaBuddyDatabase {
     repositoryId: string,
     requestedRef?: string,
     selectedApps?: string[],
-    useLocalWorkingTree = false
+    useLocalWorkingTree = false,
+    runType: RunType = "unit"
   ): RunDetail {
     const repository = this.getRepository(repositoryId);
     if (!repository) throw new Error("Repository not found");
     if (useLocalWorkingTree && !repository.localPath) {
       throw new Error("This repository has no local checkout path configured");
     }
+    if (runType === "e2e" && !repository.e2e.enabled) {
+      throw new Error("End-to-end runs are not enabled for this repository");
+    }
+    if (runType === "e2e" && repository.e2e.apps.length === 0) {
+      throw new Error("This repository has no end-to-end suites configured");
+    }
 
     const runId = randomUUID();
     const timestamp = now();
     const ref = requestedRef ?? repository.defaultRef;
     const repositorySnapshot = this.repositoryInput(repository);
+    // Each run type draws its applications from its own configuration.
+    const candidateApps: RepositoryInput["apps"] =
+      runType === "e2e"
+        ? repositorySnapshot.e2e.apps.map((app) => ({
+            name: app.name,
+            workingDirectory: app.workingDirectory,
+            testCommand: app.testCommand,
+            coverageFormat: "istanbul-summary-json" as const,
+            coveragePath: app.reportGlob
+          }))
+        : repositorySnapshot.apps;
     const availableByName = new Map(
-      repositorySnapshot.apps.map((app) => [app.name.toLocaleLowerCase(), app] as const)
+      candidateApps.map((app) => [app.name.toLocaleLowerCase(), app] as const)
     );
     const uniqueSelection = selectedApps
       ? Array.from(new Set(selectedApps.map((name) => name.toLocaleLowerCase())))
       : null;
-    if (!repository.autoDetect && uniqueSelection) {
+    if ((runType === "e2e" || !repository.autoDetect) && uniqueSelection) {
       const missing = uniqueSelection.filter((name) => !availableByName.has(name));
       if (missing.length > 0) throw new Error(`Unknown app selection: ${missing.join(", ")}`);
     }
     const selectedSet = uniqueSelection ? new Set(uniqueSelection) : null;
     const appsToRun = selectedSet
-      ? repositorySnapshot.apps.filter((app) => selectedSet.has(app.name.toLocaleLowerCase()))
-      : repositorySnapshot.apps;
+      ? candidateApps.filter((app) => selectedSet.has(app.name.toLocaleLowerCase()))
+      : candidateApps;
     const snapshot: RunConfigurationSnapshot = {
       ...repositorySnapshot,
       selectedApps: uniqueSelection
-        ? repository.autoDetect
+        ? repository.autoDetect && runType === "unit"
           ? selectedApps!
           : appsToRun.map((app) => app.name)
         : null
@@ -633,21 +774,28 @@ export class QaBuddyDatabase {
     this.connection.transaction(() => {
       const active = this.connection
         .prepare(
-          `SELECT 1 FROM runs WHERE repository_id = ? AND status IN (${placeholders(activeRunStatuses)}) LIMIT 1`
+          `SELECT 1 FROM runs WHERE repository_id = ? AND run_type = ? AND status IN (${placeholders(activeRunStatuses)}) LIMIT 1`
         )
-        .get(repositoryId, ...activeRunStatuses);
-      if (active) throw new Error("This repository already has a queued or running job");
+        .get(repositoryId, runType, ...activeRunStatuses);
+      if (active) {
+        throw new Error(
+          runType === "e2e"
+            ? "This repository already has a queued or running end-to-end job"
+            : "This repository already has a queued or running job"
+        );
+      }
 
       this.connection
         .prepare(`
           INSERT INTO runs(
-            id, repository_id, requested_ref, use_local_working_tree, status, configuration_snapshot_json, created_at
-          ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
+            id, repository_id, requested_ref, run_type, use_local_working_tree, status, configuration_snapshot_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
         `)
         .run(
           runId,
           repositoryId,
           ref,
+          runType,
           useLocalWorkingTree ? 1 : 0,
           JSON.stringify(snapshot),
           timestamp
@@ -688,11 +836,13 @@ export class QaBuddyDatabase {
     return row ? (this.mapRun(row, true) as RunDetail) : null;
   }
 
-  claimNextRun(): RunDetail | null {
+  claimNextRun(runType: RunType = "unit"): RunDetail | null {
     const id = this.connection.transaction(() => {
       const row = this.connection
-        .prepare("SELECT id FROM runs WHERE status = 'queued' ORDER BY created_at ASC, rowid ASC LIMIT 1")
-        .get() as { id: string } | undefined;
+        .prepare(
+          "SELECT id FROM runs WHERE status = 'queued' AND run_type = ? ORDER BY created_at ASC, rowid ASC LIMIT 1"
+        )
+        .get(runType) as { id: string } | undefined;
       if (!row) return null;
       const result = this.connection
         .prepare("UPDATE runs SET status = 'cloning', started_at = ? WHERE id = ? AND status = 'queued'")

@@ -39,6 +39,7 @@ function runFixture(status: RunStatus = "passed", selectedApps: string[] | null 
     useLocalWorkingTree: false,
     dirty: false,
     cancelRequested: false,
+    runType: "unit" as const,
     status,
     error: null,
     selectedApps,
@@ -58,6 +59,7 @@ function runFixture(status: RunStatus = "passed", selectedApps: string[] | null 
       additionalWorkspaces: [],
       environmentAllowlist: [],
       autoDetect: true,
+      e2e: { enabled: false, runnerImage: "", timeoutMinutes: 60, environmentAllowlist: [], apps: [] },
       apps: [],
       selectedApps
     }
@@ -113,7 +115,11 @@ describe("run detail re-run action", () => {
     await user.click(await screen.findByRole("button", { name: "Re-run" }));
 
     await screen.findByText("Re-run queued");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // Assert the request that matters rather than a total count, which changes
+    // whenever the page loads something else.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1)
+    );
     const postRequest = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     expect(postRequest?.[0]).toBe(`/api/repositories/${repositoryId}/runs`);
     expect(JSON.parse(String(postRequest?.[1]?.body))).toEqual({
@@ -234,5 +240,36 @@ describe("run detail re-run action", () => {
 
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/cancel"))).toBe(false);
     confirmSpy.mockRestore();
+  });
+
+  it("keeps a local working tree re-run on the local source", async () => {
+    const local = { ...runFixture("passed"), useLocalWorkingTree: true, dirty: true };
+    const { fetchMock, user } = renderPage(local);
+    await screen.findByRole("button", { name: /Re-run/ });
+
+    await user.click(screen.getByRole("button", { name: /Re-run/ }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+      expect(JSON.parse(String(post?.[1]?.body)).useLocalWorkingTree).toBe(true);
+    });
+  });
+
+  it("omits the flag when re-running a run that used a GitHub ref", async () => {
+    const { fetchMock, user } = renderPage(runFixture("passed"));
+    await screen.findByRole("button", { name: /Re-run/ });
+
+    await user.click(screen.getByRole("button", { name: /Re-run/ }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+      expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty("useLocalWorkingTree");
+    });
+  });
+
+  it("describes the source as the local working tree rather than a ref", async () => {
+    renderPage({ ...runFixture("passed"), useLocalWorkingTree: true });
+    await screen.findByText("local working tree");
+    expect(screen.queryByText("feature/coverage")).toBeNull();
   });
 });

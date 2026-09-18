@@ -10,6 +10,8 @@ const workspaceDirectory = process.env.QA_BUDDY_WORKSPACE_DIR ?? path.resolve("w
 const databasePath = process.env.QA_BUDDY_DATABASE_PATH ?? path.join(dataDirectory, "qa-buddy.sqlite");
 const historyLimit = Math.max(1, Number(process.env.RUN_HISTORY_LIMIT ?? 20));
 const localSourceMount = process.env.QA_BUDDY_LOCAL_SOURCE_DIR ?? "/local-source";
+// One worker per lane: the default serves unit runs, a second serves e2e.
+const runType = process.env.QA_BUDDY_RUN_TYPE === "e2e" ? "e2e" : "unit";
 const githubToken = process.env.GITHUB_TOKEN || undefined;
 // Compose always mounts something at /local-source, so the opt-in is the
 // QA_BUDDY_LOCAL_SOURCE_ROOT value in .env rather than the mount's existence.
@@ -26,7 +28,8 @@ const worker = new QaBuddyWorker({
   workspaceVolume: process.env.QA_BUDDY_WORKSPACE_VOLUME ?? "qa-buddy-workspaces",
   localSourceDirectory,
   githubToken,
-  historyLimit
+  historyLimit,
+  runType
 });
 
 const shutdown = async (): Promise<void> => {
@@ -39,6 +42,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 try {
+  console.info(`Worker lane: ${runType} runs`);
   console.info(githubAuthenticationMessage(githubToken));
   console.info(githubRegistryAuthenticationMessage(process.env.GITHUB_IDP_REGISTRY));
   console.info(

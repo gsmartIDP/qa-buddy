@@ -29,6 +29,12 @@ export class DockerRunner {
     this.container = await this.docker.createContainer({
       name: `qa-buddy-run-${this.options.runId}`,
       Image: this.options.image,
+      // Runner images are kept alive by this idle Cmd so commands can be exec'd
+      // into them. An image with its own ENTRYPOINT (cypress/included runs
+      // `cypress run`) would otherwise prepend it, exit immediately, and take
+      // the container down mid-command. A single empty string is how the Docker
+      // API clears an inherited entrypoint.
+      Entrypoint: [""],
       Cmd: ["/bin/sh", "-lc", "while :; do sleep 3600; done"],
       WorkingDir: this.options.workspaceContainerPath,
       Env: Object.entries(this.options.environment).map(([key, value]) => `${key}=${value}`),

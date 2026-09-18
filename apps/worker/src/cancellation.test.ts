@@ -88,6 +88,7 @@ const repositoryInput: RepositoryInput = {
   timeoutMinutes: 30,
   environmentAllowlist: [],
   autoDetect: false,
+  e2e: { enabled: false, runnerImage: "", timeoutMinutes: 60, environmentAllowlist: [], apps: [] },
   apps: [
     {
       name: "Web",

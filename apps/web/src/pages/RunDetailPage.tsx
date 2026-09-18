@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { RunDetail } from "@qa-buddy/shared";
+import type { RunArtifact, RunDetail } from "@qa-buddy/shared";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { appRunDurationMs, CoverageTable, formatDuration } from "../components/CoverageTable";
@@ -30,6 +30,7 @@ export function RunDetailPage() {
   const [rerunError, setRerunError] = useState("");
   const [rerunning, setRerunning] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [artifacts, setArtifacts] = useState<RunArtifact[]>([]);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
@@ -39,6 +40,7 @@ export function RunDetailPage() {
     setRerunError("");
     setRerunning(false);
     setStopping(false);
+    setArtifacts([]);
 
     let cancelled = false;
     let source: EventSource | null = null;
@@ -46,6 +48,11 @@ export function RunDetailPage() {
       .then(({ run: result }) => {
         if (cancelled) return;
         setRun(result);
+        api<{ artifacts: RunArtifact[] }>(`/api/runs/${runId}/artifacts`)
+          .then(({ artifacts: found }) => {
+            if (!cancelled) setArtifacts(found ?? []);
+          })
+          .catch(() => undefined);
         source = new EventSource(`/api/runs/${runId}/events`);
         source.addEventListener("log", (event) => {
           const data = JSON.parse((event as MessageEvent).data) as { chunk: string };
@@ -55,6 +62,11 @@ export function RunDetailPage() {
         source.addEventListener("complete", (event) => {
           setRun(JSON.parse((event as MessageEvent).data) as RunDetail);
           source?.close();
+          api<{ artifacts: RunArtifact[] }>(`/api/runs/${runId}/artifacts`)
+            .then(({ artifacts: found }) => {
+              if (!cancelled) setArtifacts(found ?? []);
+            })
+            .catch(() => undefined);
         });
       })
       .catch((caught: Error) => {
@@ -82,6 +94,9 @@ export function RunDetailPage() {
         method: "POST",
         body: JSON.stringify({
           ref: run.requestedRef,
+          // Without this a re-run of a local working tree run would silently
+          // switch source to GitHub, testing something else entirely.
+          useLocalWorkingTree: run.useLocalWorkingTree || undefined,
           apps: run.selectedApps ?? undefined
         })
       });
@@ -116,7 +131,7 @@ export function RunDetailPage() {
     <div className="page page-wide">
       <div className="breadcrumbs"><Link to="/activity">Run history</Link><span>/</span><Link to={`/repositories/${run.repositoryId}`}>{run.configurationSnapshot.name}</Link><span>/</span><span>Run {run.id.slice(0, 8)}</span></div>
       <section className="page-heading run-heading">
-        <div><span className="eyebrow">Test run · {run.id.slice(0, 8)}</span><h1>{run.configurationSnapshot.name}</h1><p>Ref <code>{run.requestedRef}</code>{run.resolvedSha && <> at <code>{run.resolvedSha.slice(0, 12)}</code></>} · {run.selectedApps ? <>Selected apps: <code>{run.selectedApps.join(", ")}</code></> : "All apps"}</p></div>
+        <div><span className="eyebrow">{run.runType === "e2e" ? "End-to-end run" : "Test run"} · {run.id.slice(0, 8)}</span><h1>{run.configurationSnapshot.name}</h1><p>{run.useLocalWorkingTree ? <>Source <code>local working tree</code></> : <>Ref <code>{run.requestedRef}</code></>}{run.resolvedSha && <> at <code>{run.resolvedSha.slice(0, 12)}</code>{run.dirty ? " plus uncommitted changes" : ""}</>} · {run.selectedApps ? <>Selected apps: <code>{run.selectedApps.join(", ")}</code></> : "All apps"}</p></div>
         <div className="heading-actions run-heading-actions">
           <StatusBadge status={run.status} />
           {isActive && (
@@ -162,8 +177,8 @@ export function RunDetailPage() {
       </section>
 
       <section className="panel detail-section">
-        <div className="panel-heading"><div><span className="eyebrow">App results</span><h2>Test and coverage readout</h2></div>{isActive && <span className="live-indicator"><i /> Live</span>}</div>
-        <CoverageTable appRuns={run.appRuns} />
+        <div className="panel-heading"><div><span className="eyebrow">{run.runType === "e2e" ? "Suite results" : "App results"}</span><h2>{run.runType === "e2e" ? "Test readout" : "Test and coverage readout"}</h2></div>{isActive && <span className="live-indicator"><i /> Live</span>}</div>
+        <CoverageTable appRuns={run.appRuns} showCoverage={run.runType !== "e2e"} />
         {totalMs !== null && (
           <div className="run-timing">
             <span>Total <strong>{formatDuration(totalMs)}</strong></span>
@@ -175,6 +190,44 @@ export function RunDetailPage() {
         {run.appRuns.some((app) => app.coverageError) && <div className="app-errors">{run.appRuns.filter((app) => app.coverageError).map((app) => <div key={app.id}><strong>{app.name}</strong><span>{app.coverageError}</span></div>)}</div>}
       </section>
 
+
+      {artifacts.length > 0 && (
+        <section className="panel detail-section">
+          <div className="panel-heading">
+            <div><span className="eyebrow">Kept from this run</span><h2>Artifacts</h2></div>
+            <span className="muted">{artifacts.length} file{artifacts.length === 1 ? "" : "s"}</span>
+          </div>
+          {Array.from(new Set(artifacts.map((artifact) => artifact.appName))).map((appName) => {
+            const forApp = artifacts.filter((artifact) => artifact.appName === appName);
+            return (
+              <div key={appName} className="artifact-group">
+                <strong>{appName}</strong>
+                <div className="artifact-grid">
+                  {forApp.map((artifact) => {
+                    const href = `/api/runs/${run.id}/artifacts/${artifact.path
+                      .split("/")
+                      .map((segment) => encodeURIComponent(segment))
+                      .join("/")}`;
+                    const isImage = /\.(png|jpe?g|gif|webp)$/i.test(artifact.path);
+                    const label = artifact.path.split("/").slice(1).join("/");
+                    return (
+                      <a key={artifact.path} href={href} target="_blank" rel="noreferrer" className="artifact-card">
+                        {isImage ? (
+                          <img src={href} alt={label} loading="lazy" />
+                        ) : (
+                          <span className="artifact-file">{label.split("/").pop()}</span>
+                        )}
+                        <small title={label}>{label}</small>
+                        <small className="muted">{Math.max(1, Math.round(artifact.sizeBytes / 1024))} KB</small>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
       <section className="panel detail-section">
         <div className="panel-heading"><div><span className="eyebrow">Test cases</span><h2>Passed and failed tests</h2></div><span className="muted">Expand an app for exact results</span></div>
         <TestCaseReadout appRuns={run.appRuns} />

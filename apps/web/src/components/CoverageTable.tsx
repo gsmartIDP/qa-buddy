@@ -45,7 +45,17 @@ function TestSummary({ app }: { app: AppRun }) {
   );
 }
 
-export function CoverageTable({ appRuns, compact = false }: { appRuns: AppRun[]; compact?: boolean }) {
+export function CoverageTable({
+  appRuns,
+  compact = false,
+  // End-to-end suites produce no coverage; showing four N/A columns implies a gap
+  // that does not exist.
+  showCoverage = true
+}: {
+  appRuns: AppRun[];
+  compact?: boolean;
+  showCoverage?: boolean;
+}) {
   return (
     <div className="table-scroll">
       <table className={compact ? "coverage-table compact" : "coverage-table"}>
@@ -55,10 +65,14 @@ export function CoverageTable({ appRuns, compact = false }: { appRuns: AppRun[];
             <th>Status</th>
             {!compact && <th>Tests</th>}
             <th>Duration</th>
-            <th>Lines</th>
-            <th>Statements</th>
-            <th>Functions</th>
-            <th>Branches</th>
+            {showCoverage && (
+              <>
+                <th>Lines</th>
+                <th>Statements</th>
+                <th>Functions</th>
+                <th>Branches</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -73,18 +87,14 @@ export function CoverageTable({ appRuns, compact = false }: { appRuns: AppRun[];
               </td>
               {!compact && <td><TestSummary app={app} /></td>}
               <td><span className="duration-value">{formatDuration(appRunDurationMs(app))}</span></td>
-              <td>
-                <Metric value={app.coverage?.lines ?? null} />
-              </td>
-              <td>
-                <Metric value={app.coverage?.statements ?? null} />
-              </td>
-              <td>
-                <Metric value={app.coverage?.functions ?? null} />
-              </td>
-              <td>
-                <Metric value={app.coverage?.branches ?? null} />
-              </td>
+              {showCoverage && (
+                <>
+                  <td><Metric value={app.coverage?.lines ?? null} /></td>
+                  <td><Metric value={app.coverage?.statements ?? null} /></td>
+                  <td><Metric value={app.coverage?.functions ?? null} /></td>
+                  <td><Metric value={app.coverage?.branches ?? null} /></td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>

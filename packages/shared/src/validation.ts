@@ -61,6 +61,91 @@ const appInputSchema = z.object({
     .refine((value) => isSafeRelativePath(value), "Coverage path must stay inside the repository")
 });
 
+const e2eAppInputSchema = z.object({
+  name: z.string().trim().min(1, "App name is required").max(100),
+  workingDirectory: z
+    .string()
+    .trim()
+    .refine((value) => isSafeRelativePath(value, true), "Working directory must stay inside the repository"),
+  testCommand: z.string().trim().min(1, "Test command is required").max(4_000),
+  reportGlob: z
+    .string()
+    .trim()
+    .refine((value) => isSafeRelativePath(value), "Report path must stay inside the repository"),
+  artifactGlobs: z
+    .array(
+      z
+        .string()
+        .trim()
+        .refine((value) => isSafeRelativePath(value), "Artifact path must stay inside the repository")
+    )
+    .max(20)
+    .default([])
+});
+
+export const e2eConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    runnerImage: z
+      .string()
+      .trim()
+      .max(255)
+      .regex(runnerImagePattern, "Runner image contains unsupported characters")
+      .or(z.literal(""))
+      .default(""),
+    setupCommand: z.string().trim().max(4_000).optional(),
+    buildCommand: z.string().trim().max(4_000).optional(),
+    timeoutMinutes: z.coerce.number().int().min(1).max(240).default(60),
+    environmentAllowlist: z
+      .array(z.string().trim().regex(environmentNamePattern, "Invalid environment variable name"))
+      .default([]),
+    apps: z.array(e2eAppInputSchema).max(50).default([])
+  })
+  .superRefine((value, context) => {
+    if (!value.enabled) return;
+
+    if (!value.runnerImage) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["runnerImage"],
+        message: "End-to-end runs need a runner image with a browser, such as cypress/included:<version>"
+      });
+    }
+    if (value.apps.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apps"],
+        message: "Add at least one end-to-end suite, or turn end-to-end runs off"
+      });
+    }
+    const names = new Set<string>();
+    value.apps.forEach((app, index) => {
+      const key = app.name.toLocaleLowerCase();
+      if (names.has(key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["apps", index, "name"],
+          message: "Suite names must be unique within a repository"
+        });
+      }
+      names.add(key);
+    });
+    if (new Set(value.environmentAllowlist).size !== value.environmentAllowlist.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["environmentAllowlist"],
+        message: "Environment variable names must be unique"
+      });
+    }
+    if (value.environmentAllowlist.includes("GITHUB_TOKEN")) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["environmentAllowlist"],
+        message: "GITHUB_TOKEN is reserved for cloning and cannot be passed to runners"
+      });
+    }
+  });
+
 export const repositoryInputSchema = z
   .object({
     name: z.string().trim().min(1, "Repository name is required").max(100),
@@ -114,7 +199,8 @@ export const repositoryInputSchema = z
       .array(z.string().trim().regex(environmentNamePattern, "Invalid environment variable name"))
       .default([]),
     autoDetect: z.boolean().default(false),
-    apps: z.array(appInputSchema).max(50).default([])
+    apps: z.array(appInputSchema).max(50).default([]),
+    e2e: e2eConfigSchema.default({})
   })
   .superRefine((value, context) => {
     if (!value.autoDetect && value.apps.length === 0) {
@@ -173,6 +259,7 @@ export const repositoryInputSchema = z
 
 export const runRequestSchema = z.object({
   ref: z.string().trim().refine(isSafeGitRef, "Enter a valid branch, tag, or commit SHA").optional(),
+  runType: z.enum(["unit", "e2e"]).default("unit"),
   useLocalWorkingTree: z.boolean().default(false),
   apps: z
     .array(z.string().trim().min(1, "App name is required").max(100))

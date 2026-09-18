@@ -26,6 +26,54 @@ export interface AppInput {
   coveragePath: string;
 }
 
+/** A run either measures unit coverage or exercises an end-to-end suite. */
+export type RunType = "unit" | "e2e";
+
+export const runTypes: RunType[] = ["unit", "e2e"];
+
+export interface E2eAppInput {
+  name: string;
+  workingDirectory: string;
+  testCommand: string;
+  /**
+   * Glob, relative to the repository root, matching the JUnit XML this suite
+   * writes. Cypress and Playwright both emit JUnit, often one file per spec.
+   */
+  reportGlob: string;
+  /**
+   * Globs, relative to the repository root, for files worth keeping after the
+   * checkout is deleted: screenshots, videos, traces.
+   */
+  artifactGlobs: string[];
+}
+
+/** A file kept from a finished run, addressed by run, suite and relative path. */
+export interface RunArtifact {
+  appName: string;
+  path: string;
+  sizeBytes: number;
+}
+
+/**
+ * End-to-end suites need their own image, commands and secrets: a browser
+ * runner rather than a Node one, and credentials a unit run never sees.
+ */
+export interface E2eConfig {
+  enabled: boolean;
+  runnerImage: string;
+  setupCommand?: string;
+  buildCommand?: string;
+  timeoutMinutes: number;
+  environmentAllowlist: string[];
+  apps: E2eAppInput[];
+}
+
+export interface E2eAppConfiguration extends E2eAppInput {
+  id: string;
+  repositoryId: string;
+  position: number;
+}
+
 export interface RepositoryInput {
   name: string;
   githubUrl: string;
@@ -49,6 +97,7 @@ export interface RepositoryInput {
   environmentAllowlist: string[];
   autoDetect: boolean;
   apps: AppInput[];
+  e2e: E2eConfig;
 }
 
 export interface RunConfigurationSnapshot extends RepositoryInput {
@@ -177,6 +226,7 @@ export interface RunSummary {
   id: string;
   repositoryId: string;
   requestedRef: string;
+  runType: RunType;
   resolvedSha: string | null;
   /** True when the source was archived from the local checkout rather than fetched. */
   useLocalWorkingTree: boolean;
@@ -216,6 +266,7 @@ export interface Repository {
   environmentAllowlist: string[];
   autoDetect: boolean;
   apps: AppConfiguration[];
+  e2e: E2eConfig;
   createdAt: string;
   updatedAt: string;
   latestRun: RunSummary | null;
