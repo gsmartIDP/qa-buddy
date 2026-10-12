@@ -589,3 +589,53 @@ label.field-disabled > span, label.field-disabled > small { color: #9b94a4; }
   .app-picker-tools, .app-group-row { flex-direction: column; align-items: stretch; }
   .app-filter { max-width: none; }
 }
+
+/* Coverage trends */
+.coverage-trends .panel-heading .filter-tabs { flex-wrap: wrap; }
+.trend-body { padding: 0 25px 22px; }
+.trend-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border-soft); margin-bottom: 18px; }
+.trend-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 12px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.trend-tabs button:hover { color: var(--accent); }
+.trend-tabs button.selected { color: var(--text); border-bottom-color: var(--accent); }
+.trend-summary { display: flex; flex-wrap: wrap; gap: 14px 44px; margin-bottom: 14px; }
+.trend-summary > div { display: flex; flex-direction: column; gap: 3px; }
+.trend-summary-label { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.trend-summary strong { font-size: 26px; letter-spacing: -.04em; color: var(--text); }
+.trend-summary span:last-child { font-size: 12px; color: var(--muted); }
+.trend-chart { position: relative; width: 100%; }
+.trend-chart svg { display: block; overflow: visible; }
+.trend-chart svg:focus-visible { outline: 3px solid #9c86e5; outline-offset: 4px; border-radius: 4px; }
+.trend-grid { stroke: var(--border-soft); stroke-width: 1; }
+.trend-axis { fill: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.trend-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; transition: opacity 150ms ease; }
+.trend-line-muted { stroke-width: 1.25; }
+.trend-line-dimmed { opacity: .2; }
+.trend-line-muted.trend-line-dimmed { opacity: .5; }
+.trend-line-focused { stroke: var(--accent); stroke-width: 2.5; }
+.trend-line-total { stroke: var(--text); stroke-width: 2.75; }
+.trend-total-dot { fill: var(--text); stroke: var(--surface); stroke-width: 2; }
+.trend-direct-label { fill: var(--text); font-size: 12px; font-weight: 800; }
+.trend-crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.trend-hover circle { stroke: var(--surface); stroke-width: 2; }
+.trend-hit { fill: transparent; cursor: crosshair; }
+.trend-tooltip { position: absolute; top: 8px; z-index: 5; display: flex; flex-direction: column; gap: 4px; min-width: 190px; max-width: 280px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 8px 20px -10px #27204140; pointer-events: none; font-size: 12px; }
+.trend-tooltip-date { font-weight: 800; color: var(--text); }
+.trend-tooltip-ref { color: var(--muted); margin-bottom: 4px; }
+.trend-tooltip-row { display: grid; grid-template-columns: 12px 52px 1fr; align-items: center; gap: 6px; color: var(--muted); }
+.trend-tooltip-row i, .trend-legend-item i { display: block; width: 12px; height: 2.5px; border-radius: 2px; }
+.trend-tooltip-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.trend-tooltip-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trend-tooltip-total strong, .trend-tooltip-total span { color: var(--text); font-weight: 800; }
+.trend-tooltip-foot { color: var(--faint); border-top: 1px solid var(--border-soft); padding-top: 6px; margin-top: 4px; }
+.trend-legend { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 12px; }
+.trend-legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; font-weight: 600; }
+.trend-legend-total { color: var(--text); font-weight: 800; }
+button.trend-legend-item:hover { color: var(--accent); background: var(--surface-raised); }
+.trend-legend-item.selected { color: var(--text); border-color: var(--border); background: var(--surface-raised); }
+.trend-legend-item.dimmed { opacity: .55; }
+.trend-table { margin-top: 14px; }
+.trend-table summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--accent); }
+.trend-table .table-scroll { margin-top: 10px; }
+@media (max-width: 640px) {
+  .trend-body { padding: 0 16px 18px; }
+}

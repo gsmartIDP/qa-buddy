@@ -10,6 +10,7 @@ import {
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { CoverageTable } from "../components/CoverageTable";
+import { CoverageTrends } from "../components/CoverageTrends";
 import { Loading } from "../components/Loading";
 import { StatusBadge } from "../components/StatusBadge";
 import { Icon } from "../components/Icon";
@@ -460,6 +461,8 @@ export function RepositoryDetailPage() {
           )}
         </form>
       </section>
+
+      <CoverageTrends repositoryId={repository.id} groups={repository.appGroups} refreshKey={repository.latestCompletedRun?.id ?? null} />
 
       {repository.latestRun && (
         <section className="panel detail-section">

@@ -12,6 +12,7 @@ import type {
   CoverageFilePage,
   CoverageFileQuery,
   CoverageFileRow,
+  CoverageHistoryEntry,
   CoverageMetricName,
   CoverageSnapshot,
   CoverageSummary,
@@ -86,6 +87,40 @@ const initialMigrationSql = `
   );
 
   CREATE INDEX app_runs_run_position_idx ON app_runs(run_id, position ASC);
+`;
+
+const coverageMetricColumns = coverageMetricNames
+  .flatMap((metric) => [`${metric}_covered`, `${metric}_total`])
+  .join(", ");
+
+const coverageMetricValues = coverageMetricNames
+  .flatMap((metric) => [
+    `json_extract(a.coverage_json, '$.${metric}.covered')`,
+    `json_extract(a.coverage_json, '$.${metric}.total')`
+  ])
+  .join(", ");
+
+/**
+ * Copies app results from completed runs into coverage_history. Shared by the
+ * migration backfill and the per-run write so both record the same shape.
+ */
+const coverageHistoryInsertSql = `
+  INSERT OR IGNORE INTO coverage_history(
+    run_id, repository_id, app_name, requested_ref, resolved_sha,
+    use_local_working_tree, dirty, recorded_at, ${coverageMetricColumns},
+    tests_total, tests_passed, tests_failed
+  )
+  SELECT
+    r.id, r.repository_id, a.name, r.requested_ref, r.resolved_sha,
+    r.use_local_working_tree, r.dirty, COALESCE(r.finished_at, r.created_at), ${coverageMetricValues},
+    json_extract(a.test_results_json, '$.total'),
+    json_extract(a.test_results_json, '$.passed'),
+    json_extract(a.test_results_json, '$.failed')
+  FROM app_runs a
+  JOIN runs r ON r.id = a.run_id
+  WHERE r.status IN ('passed', 'failed')
+    AND a.status IN ('passed', 'failed')
+    AND (a.coverage_json IS NOT NULL OR a.test_results_json IS NOT NULL)
 `;
 
 const migrations = [
@@ -176,6 +211,41 @@ const migrations = [
 
       CREATE INDEX app_groups_repository_idx ON app_groups(repository_id, name COLLATE NOCASE);
     `
+  },
+  {
+    // 11 and 12 are reserved for the Cypress-add-on branch, which already
+    // applies them to shared data volumes.
+    version: 13,
+    // Like coverage_snapshots, run_id is not a foreign key so history survives
+    // run pruning. Existing completed runs are backfilled.
+    sql: `
+      CREATE TABLE coverage_history (
+        run_id TEXT NOT NULL,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        app_name TEXT NOT NULL,
+        requested_ref TEXT NOT NULL,
+        resolved_sha TEXT,
+        use_local_working_tree INTEGER NOT NULL,
+        dirty INTEGER NOT NULL,
+        recorded_at TEXT NOT NULL,
+        lines_covered INTEGER,
+        lines_total INTEGER,
+        statements_covered INTEGER,
+        statements_total INTEGER,
+        functions_covered INTEGER,
+        functions_total INTEGER,
+        branches_covered INTEGER,
+        branches_total INTEGER,
+        tests_total INTEGER,
+        tests_passed INTEGER,
+        tests_failed INTEGER,
+        PRIMARY KEY (run_id, app_name)
+      );
+
+      CREATE INDEX coverage_history_repository_idx ON coverage_history(repository_id, recorded_at ASC);
+
+      ${coverageHistoryInsertSql};
+    `
   }
 ] as const;
 
@@ -264,6 +334,19 @@ interface CoverageSnapshotRow {
   file_count: number;
   captured_at: string;
 }
+
+type CoverageHistoryRow = {
+  run_id: string;
+  app_name: string;
+  requested_ref: string;
+  resolved_sha: string | null;
+  use_local_working_tree: number;
+  dirty: number;
+  recorded_at: string;
+  tests_total: number | null;
+  tests_passed: number | null;
+  tests_failed: number | null;
+} & Record<`${CoverageMetricName}_${"covered" | "total"}`, number | null>;
 
 interface CoverageFileRowRecord {
   app_name: string;
@@ -893,6 +976,44 @@ export class QaBuddyDatabase {
     }));
   }
 
+  listCoverageHistory(repositoryId: string): CoverageHistoryEntry[] {
+    const rows = this.connection
+      .prepare(`
+        SELECT * FROM coverage_history
+        WHERE repository_id = ?
+        ORDER BY recorded_at ASC, run_id ASC, app_name COLLATE NOCASE ASC
+      `)
+      .all(repositoryId) as CoverageHistoryRow[];
+    return rows.map((row) => {
+      const metric = (name: CoverageMetricName) => {
+        const covered = row[`${name}_covered`];
+        const total = row[`${name}_total`];
+        return covered === null || total === null
+          ? null
+          : { covered, total, percent: total === 0 ? null : Math.round((covered / total) * 1_000) / 10 };
+      };
+      return {
+        runId: row.run_id,
+        appName: row.app_name,
+        requestedRef: row.requested_ref,
+        resolvedSha: row.resolved_sha,
+        useLocalWorkingTree: row.use_local_working_tree === 1,
+        dirty: row.dirty === 1,
+        recordedAt: row.recorded_at,
+        coverage: {
+          lines: metric("lines"),
+          statements: metric("statements"),
+          functions: metric("functions"),
+          branches: metric("branches")
+        },
+        tests:
+          row.tests_total === null
+            ? null
+            : { total: row.tests_total, passed: row.tests_passed ?? 0, failed: row.tests_failed ?? 0 }
+      };
+    });
+  }
+
   queryCoverageFiles(repositoryId: string, query: CoverageFileQuery = {}): CoverageFilePage {
     const metric: CoverageMetricName = coverageMetricNames.includes(query.metric as CoverageMetricName)
       ? (query.metric as CoverageMetricName)
@@ -966,6 +1087,9 @@ export class QaBuddyDatabase {
         values.finished ? now() : current.finishedAt,
         id
       );
+    if (values.finished && (values.status === "passed" || values.status === "failed")) {
+      this.connection.prepare(`${coverageHistoryInsertSql} AND r.id = ?`).run(id);
+    }
   }
 
   startAppRun(id: string): void {

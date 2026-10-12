@@ -96,8 +96,10 @@ function repositoryFixture(): RepositoryDetail {
 }
 
 function renderPage(repository = repositoryFixture()) {
-  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    const body = init?.method === "POST" ? { run: { id: "run-new" } } : { repository };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const body = init?.method === "POST"
+      ? { run: { id: "run-new" } }
+      : String(input).endsWith("/coverage/history") ? { entries: [] } : { repository };
     return {
       ok: true,
       status: 200,
@@ -173,7 +175,7 @@ describe("repository app selection", () => {
     await user.click(screen.getByRole("button", { name: /Run 1 app/ }));
 
     await screen.findByText("Run queued");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => !String(url).endsWith("/coverage/history"))).toHaveLength(2));
     const postRequest = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     expect(JSON.parse(String(postRequest?.[1]?.body))).toEqual({
       ref: "main",

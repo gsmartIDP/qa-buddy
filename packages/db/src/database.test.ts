@@ -195,6 +195,54 @@ describe("QaBuddyDatabase", () => {
     expect(result.latestCompletedRun?.id).toBe(failed.id);
   });
 
+  function finishRunWithCoverage(repositoryId: string, status: "passed" | "failed" | "interrupted", covered: number) {
+    const run = database.createRun(repositoryId);
+    database.claimNextRun();
+    database.finishAppRun(run.appRuns[0]!.id, {
+      status: "passed",
+      exitCode: 0,
+      coverage: {
+        lines: { covered, total: 10, percent: covered * 10 },
+        statements: null,
+        functions: null,
+        branches: { covered: 1, total: 4, percent: 25 }
+      },
+      testResults: { total: 3, passed: 3, failed: 0, skipped: 0, todo: 0, testCases: [] }
+    });
+    database.updateRun(run.id, { status, finished: true });
+    return run;
+  }
+
+  it("records coverage history for completed runs and keeps it after pruning", () => {
+    const repository = database.createRepository(input);
+    const first = finishRunWithCoverage(repository.id, "passed", 4);
+    finishRunWithCoverage(repository.id, "interrupted", 9);
+    const third = finishRunWithCoverage(repository.id, "failed", 6);
+
+    database.pruneRuns(repository.id, 1);
+    const history = database.listCoverageHistory(repository.id);
+    // Runs finish within the same millisecond here, so compare without order.
+    expect(history.map((entry) => entry.runId).sort()).toEqual([first.id, third.id].sort());
+    expect(history.find((entry) => entry.runId === third.id)).toMatchObject({
+      appName: "Web",
+      coverage: { lines: { covered: 6, total: 10, percent: 60 }, statements: null, branches: { percent: 25 } },
+      tests: { total: 3, passed: 3, failed: 0 }
+    });
+
+    database.deleteRepository(repository.id);
+    expect(database.listCoverageHistory(repository.id)).toEqual([]);
+  });
+
+  it("backfills coverage history from runs completed before the table existed", () => {
+    const repository = database.createRepository(input);
+    const run = finishRunWithCoverage(repository.id, "passed", 7);
+    database.connection.exec("DROP TABLE coverage_history; DELETE FROM schema_migrations WHERE version = 13;");
+    database.close();
+    database = new QaBuddyDatabase(path.join(directory, "test.sqlite"));
+
+    expect(database.listCoverageHistory(repository.id)).toMatchObject([{ runId: run.id, coverage: { lines: { percent: 70 } } }]);
+  });
+
   it("prunes older history and blocks deletion during active work", () => {
     const repository = database.createRepository(input);
     const runIds: string[] = [];

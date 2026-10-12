@@ -197,6 +197,26 @@ describe("repository API", () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  it("serves coverage history recorded from completed runs", async () => {
+    const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
+    const repositoryId = created.json().repository.id as string;
+    const run = database.createRun(repositoryId);
+    database.claimNextRun();
+    database.finishAppRun(run.appRuns[0]!.id, {
+      status: "passed",
+      exitCode: 0,
+      coverage: { lines: { covered: 3, total: 4, percent: 75 }, statements: null, functions: null, branches: null }
+    });
+    database.updateRun(run.id, { status: "passed", finished: true });
+
+    const history = await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}/coverage/history` });
+    expect(history.statusCode).toBe(200);
+    expect(history.json().entries).toMatchObject([{ runId: run.id, coverage: { lines: { percent: 75 }, branches: null } }]);
+
+    const missing = await app.inject({ method: "GET", url: "/api/repositories/does-not-exist/coverage/history" });
+    expect(missing.statusCode).toBe(404);
+  });
+
   it("stops a run on request and refuses to stop a finished one", async () => {
     const created = await app.inject({ method: "POST", url: "/api/repositories", payload: input });
     const repositoryId = created.json().repository.id as string;

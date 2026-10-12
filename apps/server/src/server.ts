@@ -217,6 +217,16 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
     }
   );
 
+  app.get<{ Params: { repositoryId: string } }>(
+    "/api/repositories/:repositoryId/coverage/history",
+    async (request, reply) => {
+      if (!database.getRepository(request.params.repositoryId)) {
+        return reply.code(404).send({ error: "Repository not found" });
+      }
+      return { entries: database.listCoverageHistory(request.params.repositoryId) };
+    }
+  );
+
   app.get<{
     Params: { repositoryId: string };
     Querystring: {

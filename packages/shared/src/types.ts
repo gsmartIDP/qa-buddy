@@ -113,6 +113,23 @@ export interface CoverageSnapshot {
   summary: CoverageSummary;
 }
 
+/**
+ * One app's coverage and test counts from one completed (passed or failed)
+ * run. History rows are never pruned with run history, so trends outlive the
+ * runs that produced them.
+ */
+export interface CoverageHistoryEntry {
+  runId: string;
+  appName: string;
+  requestedRef: string;
+  resolvedSha: string | null;
+  useLocalWorkingTree: boolean;
+  dirty: boolean;
+  recordedAt: string;
+  coverage: CoverageSummary;
+  tests: { total: number; passed: number; failed: number } | null;
+}
+
 export interface CoverageFileQuery {
   appName?: string;
   metric?: CoverageMetricName;
