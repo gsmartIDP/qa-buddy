@@ -177,6 +177,24 @@ describe("QaBuddyDatabase", () => {
     expect(database.getRun(queued.id)?.status).toBe("queued");
   });
 
+  it("keeps the latest completed run separate from in-progress and partial runs", () => {
+    const repository = database.createRepository(input);
+    expect(database.getRepository(repository.id)?.latestCompletedRun).toBeNull();
+
+    const failed = database.createRun(repository.id);
+    database.claimNextRun();
+    database.updateRun(failed.id, { status: "failed", finished: true });
+    const interrupted = database.createRun(repository.id);
+    database.claimNextRun();
+    database.updateRun(interrupted.id, { status: "interrupted", finished: true });
+    const active = database.createRun(repository.id);
+    database.claimNextRun();
+
+    const result = database.getRepository(repository.id)!;
+    expect(result.latestRun?.id).toBe(active.id);
+    expect(result.latestCompletedRun?.id).toBe(failed.id);
+  });
+
   it("prunes older history and blocks deletion during active work", () => {
     const repository = database.createRepository(input);
     const runIds: string[] = [];

@@ -410,6 +410,22 @@ export class QaBuddyDatabase {
     return row ? (this.mapRun(row) as RunSummary) : null;
   }
 
+  /**
+   * Interrupted and timed-out runs stop partway through, so only runs that
+   * reached a pass/fail verdict count as complete results.
+   */
+  private latestCompletedRunForRepository(repositoryId: string): RunSummary | null {
+    const row = this.connection
+      .prepare(`
+        SELECT * FROM runs
+        WHERE repository_id = ? AND status IN ('passed', 'failed')
+        ORDER BY finished_at DESC, rowid DESC
+        LIMIT 1
+      `)
+      .get(repositoryId) as RunRow | undefined;
+    return row ? (this.mapRun(row) as RunSummary) : null;
+  }
+
   private mapRepository(row: RepositoryRow): Repository {
     return {
       id: row.id,
@@ -428,7 +444,8 @@ export class QaBuddyDatabase {
       apps: this.appsForRepository(row.id),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      latestRun: this.latestRunForRepository(row.id)
+      latestRun: this.latestRunForRepository(row.id),
+      latestCompletedRun: this.latestCompletedRunForRepository(row.id)
     };
   }
 

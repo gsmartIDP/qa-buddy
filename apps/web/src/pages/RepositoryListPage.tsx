@@ -11,7 +11,7 @@ function SummaryCard({ icon, label, value, detail, tone }: { icon: IconName; lab
 }
 
 function CoverageOverview({ apps }: { apps: AppRun[] }) {
-  return <section className="panel coverage-overview"><div className="section-title"><h2>Coverage breakdown</h2><span className="subtle-label">Latest available reports</span></div><div className="coverage-overview-grid">{(["lines", "statements", "functions", "branches"] as const).map((name) => {
+  return <section className="panel coverage-overview"><div className="section-title"><h2>Coverage breakdown</h2><span className="subtle-label">Latest completed runs</span></div><div className="coverage-overview-grid">{(["lines", "statements", "functions", "branches"] as const).map((name) => {
     const reports = apps.flatMap((app) => app.coverage?.[name] ? [app.coverage[name]] : []);
     const total = reports.reduce((sum, metric) => sum + metric.total, 0);
     const covered = reports.reduce((sum, metric) => sum + metric.covered, 0);
@@ -45,7 +45,8 @@ export function RepositoryListPage() {
   const [filter, setFilter] = useState("all");
   const overview = useLocation().pathname === "/";
   if (!repositories) return error ? <div className="page"><div className="alert alert-error" role="alert">{error}</div></div> : <Loading />;
-  const apps = repositories.flatMap((repository) => repository.latestRun?.appRuns ?? []);
+  // Summary metrics only read finished runs so in-progress results don't skew the totals.
+  const apps = repositories.flatMap((repository) => repository.latestCompletedRun?.appRuns ?? []);
   const testReports = apps.flatMap((app) => app.testResults ? [app.testResults] : []);
   const passed = testReports.reduce((sum, result) => sum + result.passed, 0);
   const total = testReports.reduce((sum, result) => sum + result.total, 0);
@@ -60,9 +61,9 @@ export function RepositoryListPage() {
       {error && <div className="alert alert-error" role="alert">{error} Retrying shortly.</div>}
       <section className="summary-grid" aria-label="Workspace summary">
         <SummaryCard icon="repository" label="Repositories" value={String(repositories.length).padStart(2, "0")} detail={`${repositories.filter((repository) => repository.latestRun?.status === "passed").length} with a passing latest run`} tone="violet" />
-        <SummaryCard icon="layers" label="Applications" value={String(apps.length).padStart(2, "0")} detail="Included in the latest repository runs" tone="blue" />
-        <SummaryCard icon="checkCircle" label="Tests passed" value={testReports.length ? passed.toLocaleString() : "—"} detail={testReports.length ? `Out of ${total.toLocaleString()} reported tests in latest runs` : "Results appear after your first run"} tone="green" />
-        <SummaryCard icon="coverage" label="Line coverage" value={coverage == null ? "—" : `${coverage.toFixed(1)}%`} detail="Weighted across available latest reports" tone="amber" />
+        <SummaryCard icon="layers" label="Applications" value={String(apps.length).padStart(2, "0")} detail="Included in the latest completed runs" tone="blue" />
+        <SummaryCard icon="checkCircle" label="Tests passed" value={testReports.length ? passed.toLocaleString() : "—"} detail={testReports.length ? `Out of ${total.toLocaleString()} reported tests in latest completed runs` : "Results appear after your first completed run"} tone="green" />
+        <SummaryCard icon="coverage" label="Line coverage" value={coverage == null ? "—" : `${coverage.toFixed(1)}%`} detail={active ? `Latest completed runs · ${active} in progress` : "Weighted across latest completed runs"} tone="amber" />
       </section>
       <div className={`dashboard-grid ${overview ? "" : "repositories-only"}`}>
         <section className="repositories-section" aria-label="Repositories">

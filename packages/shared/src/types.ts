@@ -219,6 +219,8 @@ export interface Repository {
   createdAt: string;
   updatedAt: string;
   latestRun: RunSummary | null;
+  /** Most recent run that finished as passed or failed; the source for stable summary metrics. */
+  latestCompletedRun: RunSummary | null;
 }
 
 /**

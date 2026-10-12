@@ -88,6 +88,7 @@ function repositoryFixture(): RepositoryDetail {
     createdAt: "2026-09-09T11:00:00.000Z",
     updatedAt: "2026-09-09T11:00:00.000Z",
     latestRun: previousRun,
+    latestCompletedRun: previousRun,
     selectableApps,
     appGroups: [],
     runs: [previousRun]
