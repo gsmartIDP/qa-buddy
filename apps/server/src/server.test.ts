@@ -286,8 +286,22 @@ describe("repository API", () => {
     expect(renamed.json().appGroup.name).toBe("Nightly smoke");
     expect(renamed.json().appGroup.appNames).toEqual(["App"]);
 
+    const second = await app.inject({
+      method: "POST",
+      url: `/api/repositories/${repositoryId}/app-groups`,
+      payload: { name: "Frontend", appNames: ["App"] }
+    });
+    const secondId = second.json().appGroup.id as string;
+    const order = (groupIds: unknown) =>
+      app.inject({ method: "PUT", url: `/api/repositories/${repositoryId}/app-groups/order`, payload: { groupIds } });
+    const reordered = await order([secondId, groupId]);
+    expect(reordered.json().appGroups.map((group: { name: string }) => group.name)).toEqual(["Frontend", "Nightly smoke"]);
+    expect((await order([groupId])).statusCode).toBe(409);
+    expect((await order([groupId, groupId])).statusCode).toBe(400);
+
     const detail = await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}` });
-    expect(detail.json().repository.appGroups).toHaveLength(1);
+    expect(detail.json().repository.appGroups.map((group: { id: string }) => group.id)).toEqual([secondId, groupId]);
+    await app.inject({ method: "DELETE", url: `/api/app-groups/${secondId}` });
 
     const removed = await app.inject({ method: "DELETE", url: `/api/app-groups/${groupId}` });
     expect(removed.statusCode).toBe(204);

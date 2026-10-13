@@ -246,6 +246,19 @@ const migrations = [
 
       ${coverageHistoryInsertSql};
     `
+  },
+  {
+    version: 14,
+    // Groups start in their previous alphabetical order.
+    sql: `
+      ALTER TABLE app_groups ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+      UPDATE app_groups SET position = (
+        SELECT COUNT(*) FROM app_groups AS earlier
+        WHERE earlier.repository_id = app_groups.repository_id
+          AND (earlier.name COLLATE NOCASE < app_groups.name COLLATE NOCASE
+            OR (earlier.name COLLATE NOCASE = app_groups.name COLLATE NOCASE AND earlier.id < app_groups.id))
+      );
+    `
   }
 ] as const;
 
@@ -819,7 +832,7 @@ export class QaBuddyDatabase {
 
   listAppGroups(repositoryId: string): AppGroup[] {
     const rows = this.connection
-      .prepare("SELECT * FROM app_groups WHERE repository_id = ? ORDER BY name COLLATE NOCASE ASC")
+      .prepare("SELECT * FROM app_groups WHERE repository_id = ? ORDER BY position ASC, name COLLATE NOCASE ASC")
       .all(repositoryId) as AppGroupRow[];
     return rows.map((row) => this.mapAppGroup(row));
   }
@@ -837,10 +850,10 @@ export class QaBuddyDatabase {
     try {
       this.connection
         .prepare(`
-          INSERT INTO app_groups(id, repository_id, name, app_names_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO app_groups(id, repository_id, name, app_names_json, position, created_at, updated_at)
+          VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position) + 1, 0) FROM app_groups WHERE repository_id = ?), ?, ?)
         `)
-        .run(id, repositoryId, input.name, JSON.stringify(input.appNames), timestamp, timestamp);
+        .run(id, repositoryId, input.name, JSON.stringify(input.appNames), repositoryId, timestamp, timestamp);
     } catch (error) {
       throw this.appGroupNameConflict(error, input.name);
     }
@@ -861,6 +874,20 @@ export class QaBuddyDatabase {
       throw this.appGroupNameConflict(error, name);
     }
     return this.getAppGroup(id);
+  }
+
+  /**
+   * Applies a new display order. The ids must be exactly the repository's
+   * groups, so a stale page cannot silently drop or duplicate one.
+   */
+  reorderAppGroups(repositoryId: string, groupIds: string[]): AppGroup[] | null {
+    const current = this.listAppGroups(repositoryId).map((group) => group.id);
+    if (current.length !== groupIds.length || !groupIds.every((id) => current.includes(id))) return null;
+    const statement = this.connection.prepare("UPDATE app_groups SET position = ? WHERE id = ?");
+    this.connection.transaction(() => {
+      groupIds.forEach((id, position) => statement.run(position, id));
+    })();
+    return this.listAppGroups(repositoryId);
   }
 
   deleteAppGroup(id: string): boolean {

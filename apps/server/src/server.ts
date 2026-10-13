@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import { QaBuddyDatabase } from "@qa-buddy/db";
 import {
   appGroupInputSchema,
+  appGroupOrderSchema,
   appGroupPatchSchema,
   coverageFileQuerySchema,
   repositoryInputSchema,
@@ -180,6 +181,24 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
         }
         throw error;
       }
+    }
+  );
+
+  app.put<{ Params: { repositoryId: string } }>(
+    "/api/repositories/:repositoryId/app-groups/order",
+    async (request, reply) => {
+      if (!database.getRepository(request.params.repositoryId)) {
+        return reply.code(404).send({ error: "Repository not found" });
+      }
+      const parsed = appGroupOrderSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: issueMessage(parsed.error) });
+      }
+      const appGroups = database.reorderAppGroups(request.params.repositoryId, parsed.data.groupIds);
+      if (!appGroups) {
+        return reply.code(409).send({ error: "Groups changed since this page loaded. Refresh and try again." });
+      }
+      return { appGroups };
     }
   );
 

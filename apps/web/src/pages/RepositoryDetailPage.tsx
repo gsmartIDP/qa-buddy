@@ -116,6 +116,22 @@ export function RepositoryDetailPage() {
     }
   };
 
+  const moveGroup = async (index: number, offset: -1 | 1) => {
+    if (!repository) return;
+    const groupIds = repository.appGroups.map((group) => group.id);
+    [groupIds[index], groupIds[index + offset]] = [groupIds[index + offset]!, groupIds[index]!];
+    setGroupBusy(true);
+    setError("");
+    try {
+      await api(`/api/repositories/${repository.id}/app-groups/order`, { method: "PUT", body: JSON.stringify({ groupIds }) });
+      await refreshRepository();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to reorder the groups");
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
   const renameGroup = async (group: AppGroup) => {
     const name = window.prompt(`Rename "${group.name}" to:`, group.name);
     if (!name || name.trim() === group.name) return;
@@ -323,7 +339,7 @@ export function RepositoryDetailPage() {
               {repository.appGroups.length > 0 && (
                 <div className="app-group-row">
                   <span className="app-group-label">Groups</span>
-                  {repository.appGroups.map((group) => {
+                  {repository.appGroups.map((group, index) => {
                     const resolved = resolveGroup(group);
                     const missing = group.appNames.length - resolved.length;
                     const isApplied = group.id === appliedGroupId;
@@ -336,33 +352,61 @@ export function RepositoryDetailPage() {
                             {missing > 0 ? ` · ${missing} no longer detected` : ""}
                           </small>
                         </button>
-                        {isApplied && appliedGroupDrifted && (
-                          <button
-                            type="button"
-                            className="text-button app-group-action"
-                            disabled={groupBusy || selectedApps.length === 0}
-                            title="Replace this group's apps with the current selection"
-                            onClick={() => updateGroup(group, { appNames: selectedApps })}
-                          >
-                            Update
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="text-button app-group-action"
-                          disabled={groupBusy}
-                          onClick={() => renameGroup(group)}
-                        >
-                          Rename
-                        </button>
-                        <button
-                          type="button"
-                          className="text-button danger app-group-action"
-                          disabled={groupBusy}
-                          onClick={() => deleteGroup(group)}
-                        >
-                          Delete
-                        </button>
+                        <span className="app-group-actions">
+                          <span>
+                            {isApplied && appliedGroupDrifted && (
+                              <button
+                                type="button"
+                                className="text-button app-group-action"
+                                disabled={groupBusy || selectedApps.length === 0}
+                                title="Replace this group's apps with the current selection"
+                                onClick={() => updateGroup(group, { appNames: selectedApps })}
+                              >
+                                Update
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="text-button app-group-action"
+                              disabled={groupBusy}
+                              onClick={() => renameGroup(group)}
+                            >
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              className="text-button danger app-group-action"
+                              disabled={groupBusy}
+                              onClick={() => deleteGroup(group)}
+                            >
+                              Delete
+                            </button>
+                          </span>
+                          {repository.appGroups.length > 1 && (
+                            <span className="app-group-move">
+                              <button
+                                type="button"
+                                className="text-button app-group-action"
+                                aria-label={`Move ${group.name} earlier`}
+                                title="Move earlier"
+                                disabled={groupBusy || index === 0}
+                                onClick={() => moveGroup(index, -1)}
+                              >
+                                ←
+                              </button>
+                              <button
+                                type="button"
+                                className="text-button app-group-action"
+                                aria-label={`Move ${group.name} later`}
+                                title="Move later"
+                                disabled={groupBusy || index === repository.appGroups.length - 1}
+                                onClick={() => moveGroup(index, 1)}
+                              >
+                                →
+                              </button>
+                            </span>
+                          )}
+                        </span>
                       </span>
                     );
                   })}

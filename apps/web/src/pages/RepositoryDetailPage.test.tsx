@@ -355,4 +355,22 @@ describe("repository app selection", () => {
     await user.click(screen.getByRole("checkbox", { name: /Worker/ }));
     expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
   });
+
+  it("moves a group later by sending the full new order", async () => {
+    const repository = {
+      ...repositoryFixture(),
+      appGroups: [groupFixture(["API"], "Backend"), { ...groupFixture(["Web"], "Frontend"), id: "group-2" }]
+    };
+    const { fetchMock, user } = renderPage(repository);
+    await screen.findByText("3 of 3 selected");
+
+    expect((screen.getByRole("button", { name: "Move Backend earlier" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Move Frontend later" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Move Backend later" }));
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/app-groups/order") && init?.method === "PUT");
+      expect(JSON.parse(String(put?.[1]?.body))).toEqual({ groupIds: ["group-2", "group-1"] });
+    });
+  });
 });

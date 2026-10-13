@@ -4,20 +4,32 @@ import {
   shortAppName,
   type AppGroup,
   type CoverageHistoryEntry,
-  type CoverageMetricName,
-  type CoverageTrend
+  type CoverageTrend,
+  type CoverageTrendMetric
 } from "@qa-buddy/shared";
 import { api } from "../api";
 
 /** Validated categorical order; past this many apps, lines fall back to gray. */
 const seriesColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
-const metricLabels: Record<CoverageMetricName, string> = {
+const metricLabels: Record<CoverageTrendMetric, string> = {
   branches: "Branches",
   functions: "Functions",
   lines: "Lines",
-  statements: "Statements"
+  statements: "Statements",
+  max: "Max",
+  min: "Min"
 };
-const metricOrder: CoverageMetricName[] = ["branches", "functions", "lines", "statements"];
+const metricOrder: CoverageTrendMetric[] = ["branches", "functions", "lines", "statements"];
+/** Combined views, kept visually apart from the real metrics. */
+const combinedMetrics: CoverageTrendMetric[] = ["max", "min"];
+const metricTitles: Record<CoverageTrendMetric, string> = {
+  branches: "Share of decision paths taken, such as both sides of an if/else or each switch case. Usually the strictest measure.",
+  functions: "Share of functions and methods called at least once.",
+  lines: "Share of executable source lines run at least once.",
+  statements: "Share of statements executed. Close to lines, but counts each statement when several share a line.",
+  max: "Each app's highest of the four metrics, weighted by line count. Optimistic by design.",
+  min: "Each app's lowest of the four metrics, weighted by line count. Pessimistic by design."
+};
 const height = 260;
 const margin = { top: 14, right: 64, bottom: 30, left: 44 };
 
@@ -51,6 +63,25 @@ function linePath(values: Array<number | null>, x: (index: number) => number, y:
   return path;
 }
 
+/** Rounded, human length of the charted period; the exact range sits beneath it. */
+export function formatSpan(from: string, to: string) {
+  const days = Math.max(0, (Date.parse(to) - Date.parse(from)) / 86_400_000);
+  const plural = (count: number, unit: string) => `${count} ${unit}${count === 1 ? "" : "s"}`;
+  if (days < 1) return "Under a day";
+  if (days < 14) return plural(Math.round(days), "day");
+  if (days < 61) return plural(Math.round(days / 7), "week");
+  if (days < 548) return plural(Math.round(days / 30.44), "month");
+  return `${(Math.round((days / 365.25) * 10) / 10).toLocaleString()} years`;
+}
+
+export function formatDateRange(from: string, to: string) {
+  const start = new Date(from);
+  const end = new Date(to);
+  const withYear = start.getFullYear() !== end.getFullYear() || end.getFullYear() !== new Date().getFullYear();
+  const format = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}) });
+  return `${format.format(start)} – ${format.format(end)}`;
+}
+
 const shortDate = (value: string) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(value));
 const longDate = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 const formatPercent = (value: number | null | undefined) => (value == null ? "—" : `${value.toFixed(1)}%`);
@@ -60,7 +91,7 @@ function formatDelta(value: number, unit: string) {
   return `${rounded > 0 ? "+" : "−"}${Math.abs(rounded).toLocaleString()} ${unit}`;
 }
 
-function TrendChart({ trend, metric }: { trend: CoverageTrend; metric: CoverageMetricName }) {
+function TrendChart({ trend, metric }: { trend: CoverageTrend; metric: CoverageTrendMetric }) {
   const wrapper = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -110,7 +141,7 @@ function TrendChart({ trend, metric }: { trend: CoverageTrend; metric: CoverageM
     hovered === null
       ? []
       : apps
-          .map((app, index) => ({ app, index, value: app.values[hovered] ?? null }))
+          .map((app, index) => ({ app, index, value: app.values[hovered] ?? null, source: app.sources[hovered] ?? null }))
           .filter(({ app, value }) => value !== null && (colored || app.appName === focusedApp));
 
   return (
@@ -183,8 +214,8 @@ function TrendChart({ trend, metric }: { trend: CoverageTrend; metric: CoverageM
           <span className="trend-tooltip-date">{longDate(active.recordedAt)}</span>
           <span className="trend-tooltip-ref"><code>{active.useLocalWorkingTree ? "local working tree" : active.requestedRef}</code>{active.resolvedSha ? <code> · {active.resolvedSha.slice(0, 8)}{active.dirty ? "+dirty" : ""}</code> : null}</span>
           <span className="trend-tooltip-row trend-tooltip-total"><i style={{ background: "var(--text)" }} /><strong>{formatPercent(active.total?.percent)}</strong><span>Total</span></span>
-          {tooltipApps.map(({ app, index, value }) => (
-            <span key={app.appName} className="trend-tooltip-row"><i style={{ background: colored ? appColor(index) : "var(--accent)" }} /><strong>{formatPercent(value)}</strong><span title={app.appName}>{shortAppName(app.appName)}{active.ranApps.some((name) => name.toLowerCase() === app.appName.toLowerCase()) ? "" : " (carried forward)"}</span></span>
+          {tooltipApps.map(({ app, index, value, source }) => (
+            <span key={app.appName} className="trend-tooltip-row"><i style={{ background: colored ? appColor(index) : "var(--accent)" }} /><strong>{formatPercent(value)}</strong><span title={app.appName}>{shortAppName(app.appName)}{source && source !== metric ? ` (${source})` : ""}{active.ranApps.some((name) => name.toLowerCase() === app.appName.toLowerCase()) ? "" : " (carried forward)"}</span></span>
           ))}
           <span className="trend-tooltip-foot">
             {active.testsTotal === null ? "No test counts" : `${active.testsTotal.toLocaleString()} tests`} · {active.ranApps.length} of {apps.length} {apps.length === 1 ? "app" : "apps"} ran
@@ -214,7 +245,7 @@ function TrendChart({ trend, metric }: { trend: CoverageTrend; metric: CoverageM
 export function CoverageTrends({ repositoryId, groups, refreshKey }: { repositoryId: string; groups: AppGroup[]; refreshKey: string | null }) {
   const [entries, setEntries] = useState<CoverageHistoryEntry[] | null>(null);
   const [error, setError] = useState("");
-  const [metric, setMetric] = useState<CoverageMetricName>("branches");
+  const [metric, setMetric] = useState<CoverageTrendMetric>("branches");
   const [groupId, setGroupId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -233,7 +264,7 @@ export function CoverageTrends({ repositoryId, groups, refreshKey }: { repositor
   const trend = entries ? buildCoverageTrend(entries, metric, group?.appNames ?? null) : null;
   const first = trend?.points.find((point) => point.total?.percent != null);
   const last = trend && [...trend.points].reverse().find((point) => point.total?.percent != null);
-  const firstTests = trend?.points.find((point) => point.testsTotal !== null)?.testsTotal ?? null;
+  const firstTestsPoint = trend?.points.find((point) => point.testsTotal !== null);
   const lastTests = (trend && [...trend.points].reverse().find((point) => point.testsTotal !== null)?.testsTotal) ?? null;
 
   return (
@@ -241,8 +272,15 @@ export function CoverageTrends({ repositoryId, groups, refreshKey }: { repositor
       <div className="panel-heading">
         <div><span className="eyebrow">Completed runs</span><h2>Coverage trend</h2></div>
         <div className="filter-tabs" role="group" aria-label="Coverage metric">
-          {metricOrder.map((name) => (
-            <button type="button" key={name} className={metric === name ? "selected" : ""} aria-pressed={metric === name} onClick={() => setMetric(name)}>
+          {[...metricOrder, ...combinedMetrics].map((name) => (
+            <button
+              type="button"
+              key={name}
+              className={`${metric === name ? "selected" : ""} ${name === combinedMetrics[0] ? "trend-metric-combined-start" : ""}`}
+              aria-pressed={metric === name}
+              title={metricTitles[name]}
+              onClick={() => setMetric(name)}
+            >
               {metricLabels[name]}
             </button>
           ))}
@@ -267,14 +305,19 @@ export function CoverageTrends({ repositoryId, groups, refreshKey }: { repositor
           <>
             <div className="trend-summary">
               <div>
-                <span className="trend-summary-label">{metricLabels[metric]} · {group?.name ?? "All apps"}</span>
+                <span className="trend-summary-label">{metric === "max" || metric === "min" ? `${metricLabels[metric]} of four` : metricLabels[metric]} · {group?.name ?? "All apps"}</span>
                 <strong>{formatPercent(last?.total?.percent)}</strong>
                 <span>{first && last && first !== last ? `${formatDelta(last.total!.percent! - first.total!.percent!, "pts")} since ${shortDate(first.recordedAt)}` : "Trends appear after a second completed run"}</span>
               </div>
               <div>
                 <span className="trend-summary-label">Tests</span>
                 <strong>{lastTests === null ? "—" : lastTests.toLocaleString()}</strong>
-                <span>{firstTests !== null && lastTests !== null && trend.points.length > 1 ? `${formatDelta(lastTests - firstTests, "tests")} over ${trend.points.length} runs` : "Across apps with test results"}</span>
+                <span>{firstTestsPoint && lastTests !== null && trend.points.length > 1 ? `${formatDelta(lastTests - firstTestsPoint.testsTotal!, "tests")} since ${shortDate(firstTestsPoint.recordedAt)}` : "Across apps with test results"}</span>
+              </div>
+              <div>
+                <span className="trend-summary-label">Time span</span>
+                <strong>{trend.points.length > 1 ? formatSpan(trend.points[0]!.recordedAt, trend.points[trend.points.length - 1]!.recordedAt) : "—"}</strong>
+                <span>{trend.points.length > 1 ? `${formatDateRange(trend.points[0]!.recordedAt, trend.points[trend.points.length - 1]!.recordedAt)} · ${trend.points.length} runs` : "1 completed run so far"}</span>
               </div>
             </div>
             <TrendChart key={`${groupId ?? "all"}-${metric}`} trend={trend} metric={metric} />

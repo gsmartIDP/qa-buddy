@@ -499,6 +499,30 @@ describe("QaBuddyDatabase", () => {
     expect(() => database.updateAppGroup(other.id, { name: "Nightly" })).toThrow("already exists");
   });
 
+  it("appends new groups and reorders them only with the complete list", () => {
+    const repository = database.createRepository(input);
+    const zebra = database.createAppGroup(repository.id, { name: "Zebra", appNames: ["Web"] });
+    const alpha = database.createAppGroup(repository.id, { name: "Alpha", appNames: ["API"] });
+    expect(database.listAppGroups(repository.id).map((group) => group.name)).toEqual(["Zebra", "Alpha"]);
+
+    expect(database.reorderAppGroups(repository.id, [alpha.id, zebra.id])?.map((group) => group.name)).toEqual(["Alpha", "Zebra"]);
+    expect(database.reorderAppGroups(repository.id, [alpha.id])).toBeNull();
+    expect(database.reorderAppGroups(repository.id, [alpha.id, "someone-else"])).toBeNull();
+    expect(database.listAppGroups(repository.id).map((group) => group.name)).toEqual(["Alpha", "Zebra"]);
+  });
+
+  it("orders existing groups alphabetically when positions are introduced", () => {
+    const repository = database.createRepository(input);
+    database.createAppGroup(repository.id, { name: "zebra", appNames: ["Web"] });
+    database.createAppGroup(repository.id, { name: "Alpha", appNames: ["API"] });
+    database.createAppGroup(repository.id, { name: "middle", appNames: ["API"] });
+    database.connection.exec("ALTER TABLE app_groups DROP COLUMN position; DELETE FROM schema_migrations WHERE version = 14;");
+    database.close();
+    database = new QaBuddyDatabase(path.join(directory, "test.sqlite"));
+
+    expect(database.listAppGroups(repository.id).map((group) => group.name)).toEqual(["Alpha", "middle", "zebra"]);
+  });
+
   it("removes groups when the repository is deleted", () => {
     const repository = database.createRepository(input);
     database.createAppGroup(repository.id, { name: "Nightly", appNames: ["Web"] });

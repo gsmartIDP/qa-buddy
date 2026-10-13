@@ -215,6 +215,15 @@ export const appGroupInputSchema = z.object({
   appNames: appGroupAppNames
 });
 
+/** The repository's complete group list in its new display order. */
+export const appGroupOrderSchema = z.object({
+  groupIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(200)
+    .refine((ids) => new Set(ids).size === ids.length, "Group ids must be unique")
+});
+
 /** Rename a group, replace its apps, or both. */
 export const appGroupPatchSchema = z
   .object({

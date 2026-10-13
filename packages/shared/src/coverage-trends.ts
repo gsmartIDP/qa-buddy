@@ -1,4 +1,11 @@
-import type { CoverageHistoryEntry, CoverageMetricName } from "./types.js";
+import type { CoverageHistoryEntry, CoverageMetric, CoverageMetricName } from "./types.js";
+import { coverageMetricNames } from "./types.js";
+
+/**
+ * A real coverage metric, or the best/worst of the four per app. Max and Min
+ * are deliberately optimistic/pessimistic views, not measurements.
+ */
+export type CoverageTrendMetric = CoverageMetricName | "max" | "min";
 
 export interface CoverageTrendPoint {
   runId: string;
@@ -19,6 +26,40 @@ export interface CoverageTrendSeries {
   appName: string;
   /** One value per point; null until the app's first measured result. */
   values: Array<number | null>;
+  /** Which metric each value came from; differs per point only for max/min. */
+  sources: Array<CoverageMetricName | null>;
+}
+
+interface ResolvedValue {
+  covered: number;
+  total: number;
+  percent: number | null;
+  source: CoverageMetricName;
+}
+
+/**
+ * Max/min pick a percentage per app, but the four metrics count different
+ * things, so the weighted total uses line count as a consistent app size.
+ */
+export function resolveTrendValue(
+  coverage: CoverageHistoryEntry["coverage"],
+  metric: CoverageTrendMetric
+): ResolvedValue | null {
+  if (metric !== "max" && metric !== "min") {
+    const value = coverage[metric];
+    return value ? { ...value, source: metric } : null;
+  }
+  let chosen: { name: CoverageMetricName; value: CoverageMetric & { percent: number } } | null = null;
+  for (const name of coverageMetricNames) {
+    const value = coverage[name];
+    if (!value || value.percent === null) continue;
+    if (!chosen || (metric === "max" ? value.percent > chosen.value.percent : value.percent < chosen.value.percent)) {
+      chosen = { name, value: value as CoverageMetric & { percent: number } };
+    }
+  }
+  if (!chosen) return null;
+  const weight = coverage.lines?.total || coverage.statements?.total || chosen.value.total;
+  return { covered: (chosen.value.percent / 100) * weight, total: weight, percent: chosen.value.percent, source: chosen.name };
 }
 
 export interface CoverageTrend {
@@ -34,7 +75,7 @@ export interface CoverageTrend {
  */
 export function buildCoverageTrend(
   entries: CoverageHistoryEntry[],
-  metric: CoverageMetricName,
+  metric: CoverageTrendMetric,
   appNames: string[] | null = null
 ): CoverageTrend {
   const scope = appNames ? new Set(appNames.map((name) => name.toLowerCase())) : null;
@@ -49,9 +90,10 @@ export function buildCoverageTrend(
   const ordered = [...runs.values()].sort(
     (a, b) => Date.parse(a[0]!.recordedAt) - Date.parse(b[0]!.recordedAt)
   );
-  const latest = new Map<string, CoverageHistoryEntry>();
+  const latest = new Map<string, { entry: CoverageHistoryEntry; value: ResolvedValue | null }>();
   const appOrder: string[] = [];
   const valuesByApp = new Map<string, Array<number | null>>();
+  const sourcesByApp = new Map<string, Array<CoverageMetricName | null>>();
   const points: CoverageTrendPoint[] = [];
 
   ordered.forEach((runEntries, index) => {
@@ -60,18 +102,18 @@ export function buildCoverageTrend(
       if (!valuesByApp.has(key)) {
         appOrder.push(entry.appName);
         valuesByApp.set(key, Array<number | null>(index).fill(null));
+        sourcesByApp.set(key, Array<CoverageMetricName | null>(index).fill(null));
       }
-      const previous = latest.get(key);
       // A run that produced tests but no coverage keeps the last coverage value.
-      latest.set(key, entry.coverage[metric] || !previous ? entry : { ...entry, coverage: previous.coverage });
+      const value = resolveTrendValue(entry.coverage, metric) ?? latest.get(key)?.value ?? null;
+      latest.set(key, { entry, value });
     }
 
     let covered = 0;
     let total = 0;
     let measured = 0;
     let testsTotal: number | null = null;
-    for (const entry of latest.values()) {
-      const value = entry.coverage[metric];
+    for (const { entry, value } of latest.values()) {
       if (value) {
         covered += value.covered;
         total += value.total;
@@ -79,7 +121,11 @@ export function buildCoverageTrend(
       }
       if (entry.tests) testsTotal = (testsTotal ?? 0) + entry.tests.total;
     }
-    for (const [key, values] of valuesByApp) values.push(latest.get(key)?.coverage[metric]?.percent ?? null);
+    for (const [key, values] of valuesByApp) {
+      const value = latest.get(key)?.value ?? null;
+      values.push(value?.percent ?? null);
+      sourcesByApp.get(key)!.push(value?.source ?? null);
+    }
 
     const first = runEntries[0]!;
     points.push({
@@ -97,6 +143,10 @@ export function buildCoverageTrend(
 
   return {
     points,
-    apps: appOrder.map((appName) => ({ appName, values: valuesByApp.get(appName.toLowerCase())! }))
+    apps: appOrder.map((appName) => ({
+      appName,
+      values: valuesByApp.get(appName.toLowerCase())!,
+      sources: sourcesByApp.get(appName.toLowerCase())!
+    }))
   };
 }

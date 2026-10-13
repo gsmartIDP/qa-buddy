@@ -580,6 +580,9 @@ label.field-disabled > span, label.field-disabled > small { color: #9b94a4; }
 .app-group-apply { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 0; color: #5a5067; background: none; border: 0; cursor: pointer; text-align: left; font-size: 13px; font-weight: 600; }
 .app-group-apply small { font-size: 11px; font-weight: 400; color: #796d84; }
 .app-group-action { font-size: 11px; }
+.app-group-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.app-group-actions > span { display: inline-flex; align-items: center; gap: 8px; }
+.app-group-move .app-group-action { font-size: 13px; line-height: 1; padding: 0 2px; }
 .app-group-save { display: inline-flex; align-items: center; gap: 8px; }
 .app-group-save input { min-height: 38px; width: 180px; }
 .app-group-hint { margin: 0; padding: 0 25px 12px; font-size: 12px; color: #796d84; overflow-wrap: anywhere; }
@@ -639,3 +642,5 @@ button.trend-legend-item:hover { color: var(--accent); background: var(--surface
 @media (max-width: 640px) {
   .trend-body { padding: 0 16px 18px; }
 }
+.filter-tabs button.trend-metric-combined-start { margin-left: 7px; position: relative; }
+.filter-tabs button.trend-metric-combined-start::before { content: ""; position: absolute; left: -6px; top: 6px; bottom: 6px; width: 1px; background: #d9d6e2; }

@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppGroup, CoverageHistoryEntry } from "@qa-buddy/shared";
-import { CoverageTrends } from "./CoverageTrends";
+import { CoverageTrends, formatSpan } from "./CoverageTrends";
 
 function entry(runId: string, day: number, appName: string, lines: number, branches: number): CoverageHistoryEntry {
   return {
@@ -55,6 +55,9 @@ describe("CoverageTrends", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/repositories/repo-1/coverage/history", expect.anything());
     await waitFor(() => expect(headline()).toBe("53.0%"));
     expect(screen.getByText("+3 pts since Oct 1")).toBeTruthy();
+    expect(screen.getByText("No change since Oct 1")).toBeTruthy();
+    expect(screen.getByText("1 day")).toBeTruthy();
+    expect(screen.getByText(/Oct 1 – Oct 2.* · 2 runs/)).toBeTruthy();
     expect(screen.getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "Branches" }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -91,5 +94,16 @@ describe("CoverageTrends", () => {
     await waitFor(() => expect(headline()).toBe("60.0%"));
     await user.click(screen.getByRole("tab", { name: "Frontend" }));
     expect(screen.getByText("No completed runs have reported coverage for Frontend yet.")).toBeTruthy();
+  });
+
+  it("rounds the time span to the unit a reader would use", () => {
+    const from = "2026-01-01T00:00:00.000Z";
+    const after = (days: number) => new Date(Date.parse(from) + days * 86_400_000).toISOString();
+    expect(formatSpan(from, after(0.5))).toBe("Under a day");
+    expect(formatSpan(from, after(1))).toBe("1 day");
+    expect(formatSpan(from, after(21))).toBe("3 weeks");
+    expect(formatSpan(from, after(75))).toBe("2 months");
+    expect(formatSpan(from, after(365))).toBe("12 months");
+    expect(formatSpan(from, after(600))).toBe("1.6 years");
   });
 });
