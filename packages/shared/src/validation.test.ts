@@ -112,6 +112,21 @@ describe("repository validation", () => {
     expect(repositoryInputSchema.safeParse({ ...base, testWorkerLimit: 17 }).success).toBe(false);
   });
 
+  it("accepts an optional coverage goal between 1 and 100", () => {
+    const base = {
+      name: "Platform",
+      githubUrl: "https://github.com/example/platform",
+      defaultRef: "main",
+      runnerImage: "node:22-bookworm",
+      autoDetect: true
+    };
+    const unset = repositoryInputSchema.safeParse(base);
+    expect(unset.success && unset.data.coverageGoal).toBeNull();
+    expect(repositoryInputSchema.safeParse({ ...base, coverageGoal: 70 }).success).toBe(true);
+    expect(repositoryInputSchema.safeParse({ ...base, coverageGoal: 0 }).success).toBe(false);
+    expect(repositoryInputSchema.safeParse({ ...base, coverageGoal: 101 }).success).toBe(false);
+  });
+
   it("validates optional per-run app selections", () => {
     expect(runRequestSchema.safeParse({ ref: "main", apps: ["Web", "API"] }).success).toBe(true);
     expect(runRequestSchema.safeParse({ apps: [] }).success).toBe(false);

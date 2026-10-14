@@ -506,7 +506,7 @@ export function RepositoryDetailPage() {
         </form>
       </section>
 
-      <CoverageTrends repositoryId={repository.id} groups={repository.appGroups} refreshKey={repository.latestCompletedRun?.id ?? null} />
+      <CoverageTrends repositoryId={repository.id} repositoryName={repository.name} groups={repository.appGroups} goal={repository.coverageGoal} refreshKey={repository.latestCompletedRun?.id ?? null} />
 
       {repository.latestRun && (
         <section className="panel detail-section">

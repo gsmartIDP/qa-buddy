@@ -48,6 +48,11 @@ export interface RepositoryInput {
   timeoutMinutes: number;
   environmentAllowlist: string[];
   autoDetect: boolean;
+  /**
+   * Target coverage percentage drawn on every trend chart, for every metric
+   * and group. Null when no goal is set.
+   */
+  coverageGoal?: number | null;
   apps: AppInput[];
 }
 
@@ -232,6 +237,7 @@ export interface Repository {
   timeoutMinutes: number;
   environmentAllowlist: string[];
   autoDetect: boolean;
+  coverageGoal: number | null;
   apps: AppConfiguration[];
   createdAt: string;
   updatedAt: string;

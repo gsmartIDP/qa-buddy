@@ -259,6 +259,10 @@ const migrations = [
             OR (earlier.name COLLATE NOCASE = app_groups.name COLLATE NOCASE AND earlier.id < app_groups.id))
       );
     `
+  },
+  {
+    version: 15,
+    sql: "ALTER TABLE repositories ADD COLUMN coverage_goal REAL;"
   }
 ] as const;
 
@@ -276,6 +280,7 @@ interface RepositoryRow {
   timeout_minutes: number;
   environment_allowlist_json: string;
   auto_detect: number;
+  coverage_goal: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -537,6 +542,7 @@ export class QaBuddyDatabase {
       timeoutMinutes: row.timeout_minutes,
       environmentAllowlist: JSON.parse(row.environment_allowlist_json) as string[],
       autoDetect: row.auto_detect === 1,
+      coverageGoal: row.coverage_goal,
       apps: this.appsForRepository(row.id),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -559,6 +565,7 @@ export class QaBuddyDatabase {
       timeoutMinutes: repository.timeoutMinutes,
       environmentAllowlist: repository.environmentAllowlist,
       autoDetect: repository.autoDetect,
+      coverageGoal: repository.coverageGoal,
       apps: repository.apps.map(({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app)
     };
   }
@@ -610,8 +617,9 @@ export class QaBuddyDatabase {
         .prepare(`
           INSERT INTO repositories(
             id, name, github_url, default_ref, local_path, additional_workspaces_json, runner_image, setup_command,
-            build_command, test_worker_limit, timeout_minutes, environment_allowlist_json, auto_detect, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            build_command, test_worker_limit, timeout_minutes, environment_allowlist_json, auto_detect, coverage_goal,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -627,6 +635,7 @@ export class QaBuddyDatabase {
           input.timeoutMinutes,
           JSON.stringify(input.environmentAllowlist),
           input.autoDetect ? 1 : 0,
+          input.coverageGoal ?? null,
           timestamp,
           timestamp
         );
@@ -643,7 +652,8 @@ export class QaBuddyDatabase {
         .prepare(`
           UPDATE repositories SET
             name = ?, github_url = ?, default_ref = ?, local_path = ?, additional_workspaces_json = ?, runner_image = ?, setup_command = ?,
-            build_command = ?, test_worker_limit = ?, timeout_minutes = ?, environment_allowlist_json = ?, auto_detect = ?, updated_at = ?
+            build_command = ?, test_worker_limit = ?, timeout_minutes = ?, environment_allowlist_json = ?, auto_detect = ?,
+            coverage_goal = ?, updated_at = ?
           WHERE id = ?
         `)
         .run(
@@ -659,6 +669,7 @@ export class QaBuddyDatabase {
           input.timeoutMinutes,
           JSON.stringify(input.environmentAllowlist),
           input.autoDetect ? 1 : 0,
+          input.coverageGoal ?? null,
           timestamp,
           id
         );

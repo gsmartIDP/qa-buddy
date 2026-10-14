@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCoverageTrend, resolveTrendValue } from "./coverage-trends.js";
+import { buildCoverageTrend, resolveTrendValue, sliceTrend, trendMovers, trendReliability } from "./coverage-trends.js";
 import type { CoverageHistoryEntry } from "./types.js";
 
 function entry(runId: string, recordedAt: string, appName: string, covered: number | null, total = 10, tests = 5): CoverageHistoryEntry {
@@ -76,5 +76,36 @@ describe("buildCoverageTrend", () => {
     expect(max.apps.map((app) => app.sources[0])).toEqual(["functions", "lines"]);
     // web 10% x 100 + api 25% x 300 = 85 / 400
     expect(buildCoverageTrend(history, "min").points[0]?.total?.percent).toBe(21.3);
+  });
+
+  it("slices to a range while keeping values carried in from before it", () => {
+    const sliced = sliceTrend(buildCoverageTrend(history, "branches"), "2026-10-02T00:00:00.000Z");
+    expect(sliced.points.map((point) => point.runId)).toEqual(["r2", "r3"]);
+    // api last ran in r1, before the range, yet still counts toward the total.
+    expect(sliced.points[0]?.total?.percent).toBe(20);
+    expect(sliced.apps).toMatchObject([{ appName: "web", values: [80, 80] }, { appName: "api", values: [5, 75] }]);
+    expect(sliceTrend(buildCoverageTrend(history, "branches"), "2026-11-01T00:00:00.000Z")).toEqual({ points: [], apps: [] });
+  });
+
+  it("ranks the biggest movers and ignores apps without two points", () => {
+    const movers = trendMovers(
+      buildCoverageTrend(
+        [
+          ...history,
+          entry("r3", "2026-10-03T00:00:00.000Z", "docs", 9),
+          entry("r1", "2026-10-01T00:00:00.000Z", "legacy", 6),
+          entry("r3", "2026-10-03T00:00:00.000Z", "legacy", 4)
+        ],
+        "branches"
+      )
+    );
+    expect(movers.improved.map((mover) => [mover.appName, mover.delta])).toEqual([["api", 70], ["web", 30]]);
+    expect(movers.declined).toEqual([{ appName: "legacy", from: 60, to: 40, delta: -20 }]);
+  });
+
+  it("counts pass rate only from apps that ran, never rounding a failure up to 100%", () => {
+    const failing = { ...entry("r2", "2026-10-02T00:00:00.000Z", "web", 8), tests: { total: 2000, passed: 1999, failed: 1 } };
+    const reliability = trendReliability(buildCoverageTrend([history[0]!, history[1]!, failing], "lines"));
+    expect(reliability).toEqual({ passRate: 99.9, runsWithTests: 2, runsWithFailures: 1 });
   });
 });

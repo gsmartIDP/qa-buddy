@@ -114,6 +114,7 @@ export const repositoryInputSchema = z
       .array(z.string().trim().regex(environmentNamePattern, "Invalid environment variable name"))
       .default([]),
     autoDetect: z.boolean().default(false),
+    coverageGoal: z.number().min(1, "Coverage goal must be between 1 and 100").max(100, "Coverage goal must be between 1 and 100").nullable().default(null),
     apps: z.array(appInputSchema).max(50).default([])
   })
   .superRefine((value, context) => {

@@ -84,6 +84,7 @@ function repositoryFixture(): RepositoryDetail {
     additionalWorkspaces: [],
     environmentAllowlist: [],
     autoDetect: true,
+    coverageGoal: null,
     apps: [],
     createdAt: "2026-09-09T11:00:00.000Z",
     updatedAt: "2026-09-09T11:00:00.000Z",

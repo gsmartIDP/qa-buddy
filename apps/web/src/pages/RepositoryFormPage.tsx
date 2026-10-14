@@ -25,6 +25,7 @@ const initialValue: RepositoryInput = {
   timeoutMinutes: 30,
   environmentAllowlist: [],
   autoDetect: false,
+  coverageGoal: null,
   apps: [emptyApp()]
 };
 
@@ -55,6 +56,7 @@ export function RepositoryFormPage() {
           timeoutMinutes: repository.timeoutMinutes,
           environmentAllowlist: repository.environmentAllowlist,
           autoDetect: repository.autoDetect,
+          coverageGoal: repository.coverageGoal,
           apps: repository.apps.map(({ id: _id, repositoryId: _repositoryId, position: _position, ...app }) => app)
         });
         setEnvironmentNames(repository.environmentAllowlist.join(", "));
@@ -211,6 +213,19 @@ export function RepositoryFormPage() {
                 value={value.timeoutMinutes}
                 onChange={(event) => setValue({ ...value, timeoutMinutes: Number(event.target.value) })}
               />
+            </label>
+            <label>
+              <span>Coverage goal (%)</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                step="0.1"
+                placeholder="No goal"
+                value={value.coverageGoal ?? ""}
+                onChange={(event) => setValue({ ...value, coverageGoal: event.target.value === "" ? null : Number(event.target.value) })}
+              />
+              <small>Drawn as a target line on every coverage trend chart. Leave blank for none.</small>
             </label>
             <label>
               <span>Test workers per app</span>

@@ -29,10 +29,10 @@ const groups: AppGroup[] = [
   { id: "g-fe", repositoryId: "repo-1", name: "Frontend", appNames: ["@acme/web"], createdAt: "", updatedAt: "" }
 ];
 
-function renderTrends(entries: CoverageHistoryEntry[]) {
+function renderTrends(entries: CoverageHistoryEntry[], goal: number | null = null) {
   const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ entries }) }) as Response);
   vi.stubGlobal("fetch", fetchMock);
-  render(<CoverageTrends repositoryId="repo-1" groups={groups} refreshKey="run-2" />);
+  render(<CoverageTrends repositoryId="repo-1" groups={groups} refreshKey="run-2" goal={goal} />);
   return { fetchMock, user: userEvent.setup() };
 }
 
@@ -105,5 +105,69 @@ describe("CoverageTrends", () => {
     expect(formatSpan(from, after(75))).toBe("2 months");
     expect(formatSpan(from, after(365))).toBe("12 months");
     expect(formatSpan(from, after(600))).toBe("1.6 years");
+  });
+
+  it("narrows to a time range and summarises movers, uncovered counts and pass rate", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-13T12:00:00.000Z"));
+    try {
+      const older = { ...entry("run-0", 1, "@acme/web", 20, 10), recordedAt: "2026-08-01T12:00:00.000Z" };
+      const failing = { ...entry("run-2", 2, "@acme/web", 60, 46), tests: { total: 10, passed: 9, failed: 1 } };
+      const { user } = renderTrends([older, history[0]!, history[1]!, failing]);
+      await waitFor(() => expect(headline()).toBe("53.0%"));
+      expect(screen.getByText(/Aug 1 – Oct 2/)).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "30 days" }));
+      expect(screen.getByText("1 day")).toBeTruthy();
+      expect(screen.getByText("+3 pts since Oct 1")).toBeTruthy();
+      expect(screen.getByText("−6 since Oct 1 · codebase unchanged")).toBeTruthy();
+      expect(screen.getByText("96.6%")).toBeTruthy();
+      expect(screen.getByText("1 of 2 runs had failures")).toBeTruthy();
+      const improved = screen.getByText("Most improved").parentElement!;
+      expect(within(improved).getByText("web")).toBeTruthy();
+      expect(within(improved).getByText("+6 pts")).toBeTruthy();
+      expect(screen.getByText("No app declined in this range")).toBeTruthy();
+
+      await user.click(screen.getByRole("button", { name: "Max" }));
+      expect(screen.queryByText(/Uncovered/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("draws the repository goal on every tab and says how far away it is", async () => {
+    const { user } = renderTrends(history, 70);
+    await waitFor(() => expect(headline()).toBe("53.0%"));
+    expect(screen.getByText("17 pts to 70% goal")).toBeTruthy();
+    expect(document.querySelector(".trend-goal text")?.textContent).toBe("Goal 70%");
+
+    await user.click(screen.getByRole("tab", { name: "Frontend" }));
+    expect(document.querySelector(".trend-goal")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Max" }));
+    expect(screen.getByText("10 pts to 70% goal")).toBeTruthy();
+  });
+
+  it("omits the goal line when no goal is set", async () => {
+    renderTrends(history);
+    await waitFor(() => expect(headline()).toBe("53.0%"));
+    expect(document.querySelector(".trend-goal")).toBeNull();
+    expect(screen.queryByText(/goal/)).toBeNull();
+  });
+
+  it("downloads the current view as an SVG file", async () => {
+    const createObjectURL = vi.fn(() => "blob:trend");
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const { user } = renderTrends(history, 70);
+    await waitFor(() => expect(headline()).toBe("53.0%"));
+    await user.click(screen.getByRole("tab", { name: "Frontend" }));
+
+    await user.click(screen.getByRole("button", { name: "SVG" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const blob = (createObjectURL.mock.calls[0] as unknown as [Blob])[0];
+    expect(blob.type).toContain("image/svg+xml");
+    expect(await blob.text()).toContain("Branches · Frontend · All history");
+    expect((click.mock.contexts[0] as HTMLAnchorElement).download).toMatch(/^repository-branches-frontend-all-history-\d{4}-\d{2}-\d{2}\.svg$/);
+    click.mockRestore();
   });
 });

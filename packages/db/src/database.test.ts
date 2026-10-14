@@ -499,6 +499,13 @@ describe("QaBuddyDatabase", () => {
     expect(() => database.updateAppGroup(other.id, { name: "Nightly" })).toThrow("already exists");
   });
 
+  it("stores an optional coverage goal on the repository", () => {
+    const repository = database.createRepository(input);
+    expect(repository.coverageGoal).toBeNull();
+    expect(database.updateRepository(repository.id, { ...input, coverageGoal: 70 })?.coverageGoal).toBe(70);
+    expect(database.updateRepository(repository.id, { ...input, coverageGoal: null })?.coverageGoal).toBeNull();
+  });
+
   it("appends new groups and reorders them only with the complete list", () => {
     const repository = database.createRepository(input);
     const zebra = database.createAppGroup(repository.id, { name: "Zebra", appNames: ["Web"] });
