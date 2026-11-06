@@ -346,6 +346,8 @@ pnpm test
 
 The default Compose services run `docker/dev-watch.mjs`, which keeps the port-3003 environment synchronized with ordinary source edits without rebuilding the Docker image manually.
 
+A worker restart would end any run or slice build in progress, so when worker code changes (an edit, or a branch switch in this checkout touching `apps/worker/src`, `packages/shared/src`, or `packages/db/src`) while one is cloning, building, or testing, the watcher holds the restart. The dashboard shows a banner naming the work in progress, with **Restart when it finishes** and **Restart now (ends the run)**; the worker restarts with the new code as soon as the work finishes, or immediately when you choose. With nothing running it restarts straight away, as before. The held restart lives in `<data dir>/worker-restart.json`, and `GET`/`POST /api/worker-restart` read and decide it. Server and web changes still restart the server immediately, which does not affect runs. `docker/dev-watch.mjs` itself is part of the image, so changes to it need `docker compose up -d --build`.
+
 Useful endpoints:
 
 - `GET /api/health`

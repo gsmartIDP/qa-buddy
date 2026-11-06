@@ -14,6 +14,16 @@ export interface ApiEndpoint {
 export const apiEndpoints: ApiEndpoint[] = [
   { method: "GET", path: "/api", summary: "This list of endpoints." },
   { method: "GET", path: "/api/health", summary: "Liveness check." },
+  {
+    method: "GET",
+    path: "/api/worker-restart",
+    summary: "Docker dev mode: a worker restart held because worker code changed during a run (pending, or null), and the runs and slice builds in progress."
+  },
+  {
+    method: "POST",
+    path: "/api/worker-restart",
+    summary: 'Decide a held worker restart. Body: { decision: "now" | "after-run" }. "now" ends in-progress runs as interrupted.'
+  },
 
   { method: "GET", path: "/api/repositories", summary: "All repositories with their latest and latest completed runs. Use it to find a repository id by name." },
   { method: "POST", path: "/api/repositories", summary: "Create a repository configuration." },

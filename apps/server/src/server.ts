@@ -20,6 +20,7 @@ import {
 } from "@qa-buddy/shared";
 import { apiEndpoints } from "./api-reference.js";
 import { initialLogOffset, readLogChunk } from "./log-stream.js";
+import { decideWorkerRestart, listActiveWork, readPendingWorkerRestart } from "./worker-restart.js";
 
 export interface ServerOptions {
   database: QaBuddyDatabase;
@@ -101,6 +102,21 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   const { database } = options;
 
   app.get("/api/health", async () => ({ status: "ok", service: "qa-buddy" }));
+
+  app.get("/api/worker-restart", async () => ({
+    pending: readPendingWorkerRestart(options.dataDirectory),
+    activeWork: listActiveWork(options.database)
+  }));
+
+  app.post("/api/worker-restart", async (request, reply) => {
+    const decision = (request.body as { decision?: unknown } | undefined)?.decision;
+    if (decision !== "now" && decision !== "after-run") {
+      return reply.code(400).send({ error: 'decision must be "now" or "after-run"' });
+    }
+    const pending = decideWorkerRestart(options.dataDirectory, decision);
+    if (!pending) return reply.code(404).send({ error: "No worker restart is waiting" });
+    return { pending, activeWork: listActiveWork(options.database) };
+  });
 
   app.get("/api", async () => ({
     service: "qa-buddy",
