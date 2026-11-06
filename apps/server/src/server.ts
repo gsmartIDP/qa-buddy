@@ -101,6 +101,23 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
   });
   const { database } = options;
 
+  // Every `:repositoryId` also accepts the repository's name (ignoring case),
+  // so scripts and agents can skip the id lookup.
+  app.addHook("preValidation", async (request, reply) => {
+    const params = request.params as { repositoryId?: string } | undefined;
+    const given = params?.repositoryId;
+    if (!given || database.getRepository(given)) return;
+    const matches = database.findRepositoriesByName(given);
+    if (matches.length === 1) {
+      params!.repositoryId = matches[0]!.id;
+    } else if (matches.length > 1) {
+      return reply.code(409).send({
+        error: `Several repositories are named "${given}"; use an id instead`,
+        repositoryIds: matches.map((repository) => repository.id)
+      });
+    }
+  });
+
   app.get("/api/health", async () => ({ status: "ok", service: "qa-buddy" }));
 
   app.get("/api/worker-restart", async () => ({
@@ -120,7 +137,7 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
 
   app.get("/api", async () => ({
     service: "qa-buddy",
-    description: "Local test-run and coverage dashboard. Paths are relative to this server; ids come from /api/repositories.",
+    description: "Local test-run and coverage dashboard. Paths are relative to this server; a :repositoryId can be the id from /api/repositories or the repository name.",
     endpoints: apiEndpoints
   }));
 
@@ -371,7 +388,7 @@ export async function buildServer(options: ServerOptions): Promise<FastifyInstan
       if (!file) {
         return reply.code(404).send({ error: "No coverage snapshot lists this file" });
       }
-      return { file };
+      return { file, slices: database.listFileSlices(request.params.repositoryId, filePath) };
     }
   );
 

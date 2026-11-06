@@ -258,7 +258,7 @@ function SliceCard({ repositoryId, slice, metric }: { repositoryId: string; slic
           <span className="muted">{sliceMetricLabels[metric]}{value ? ` · ${value.covered.toLocaleString()}/${value.total.toLocaleString()}` : ""}</span>
         </div>
       </div>
-      {reachedBackends(slice).length > 1 && (
+      {reachedBackends(slice).length > 0 && (
         <ul className="slice-card-backends" aria-label="Coverage by backend">
           {reachedBackends(slice).map((backend) => {
             const backendValue = backend.coverage[metric];

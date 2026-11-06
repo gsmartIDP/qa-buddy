@@ -11,14 +11,15 @@ QA Buddy runs repositories' test suites locally and records coverage per app, pe
 
 1. Check it is running: `curl -sf http://localhost:3003/api/health`. If that fails, tell the user QA Buddy is not running (they start it with `docker compose up -d` in the qa-buddy checkout) rather than guessing at coverage.
 2. Discover endpoints: `curl -s http://localhost:3003/api` lists every endpoint with its query parameters. Prefer it over memory if anything below seems out of date.
-3. Find the repository id by name:
+3. Pick the repository. Every `:repositoryId` in the API also accepts the repository's name (case-insensitive), so `REPO=idplans-platform` works. List them with:
    ```bash
    curl -s http://localhost:3003/api/repositories | jq -r '.repositories[] | "\(.id)  \(.name)"'
    ```
+   If two repositories share a name, the API answers 409 with their ids; use an id then.
 
 ## Recipes
 
-Set `BASE=http://localhost:3003` and `REPO=<repository id>`.
+Set `BASE=http://localhost:3003` and `REPO=<repository name or id>`.
 
 **Slice overview** (coverage per frontend app, split by backend):
 ```bash
@@ -41,6 +42,12 @@ curl -s "$BASE/api/repositories/$REPO/coverage/files/export?slice=idinspect&metr
 curl -s "$BASE/api/repositories/$REPO/coverage/file?path=<repository-relative path>" | jq '.file | {lines, branches, details, snapshot}'
 ```
 `details.uncoveredFunctions` are functions never called, `details.uncoveredLines` are inclusive line ranges that never ran, and `details.uncoveredBranches` are branch points where some paths were never taken. `details` is null when the app's last run did not produce a detailed report.
+
+**Who is affected if a file changes** (the slices that include it):
+```bash
+curl -s "$BASE/api/repositories/$REPO/coverage/file?path=<repository-relative path>" | jq '.slices[] | {sliceName, backendDirectory, endpoints: [.handledEndpoints[] | "\(.httpMethod | ascii_upcase) \(.path)"]}'
+```
+`handledEndpoints` lists the slice's endpoints whose handler is in this file; it is empty for files a slice reaches through imports (services, helpers), since slices record files per backend rather than per endpoint.
 
 **Trend over time:** `GET /api/repositories/$REPO/slices/history` (per slice) and `GET /api/repositories/$REPO/coverage/history` (per app). Each entry is one completed run.
 

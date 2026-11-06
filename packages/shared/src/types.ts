@@ -447,6 +447,16 @@ export interface SliceEndpoint {
 }
 
 /** A hand-written request to a configured backend that matched no route. */
+/** A slice that includes a given backend file. */
+export interface FileSliceMembership {
+  sliceName: string;
+  frontendDirectory: string;
+  /** Backend workspace the file belongs to within the slice. */
+  backendDirectory: string;
+  /** Slice endpoints whose handler is in this file; empty when the file is reached through imports. */
+  handledEndpoints: SliceEndpoint[];
+}
+
 export interface SliceUnmatchedCall {
   backendDirectory: string;
   /** Repository-relative `file:line` of the request. */

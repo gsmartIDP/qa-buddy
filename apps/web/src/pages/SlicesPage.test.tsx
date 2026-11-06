@@ -134,7 +134,15 @@ describe("SlicesPage", () => {
           finishedAt: "2026-11-04T12:00:02.000Z"
         }
       ],
-      slices: [slice]
+      slices: [
+        slice,
+        {
+          ...slice,
+          name: "admin",
+          frontendDirectory: "apps/admin",
+          backends: [slice.backends[0]!, { ...slice.backends[1]!, endpointCount: 0, fileCount: 0, measuredFileCount: 0 }]
+        }
+      ]
     });
     renderAt(`/repositories/${repositoryId}/slices`);
 
@@ -144,6 +152,8 @@ describe("SlicesPage", () => {
       "api47.5%",
       "rpm-api21.5%"
     ]);
+    const single = screen.getByRole("link", { name: /admin/ });
+    expect(within(within(single).getByRole("list", { name: "Coverage by backend" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["api47.5%"]);
     expect(screen.getByText("api + rpm-api · every app using a client")).toBeTruthy();
     expect(screen.getByText("Edit recipe")).toBeTruthy();
     expect(within(card).getByText("640")).toBeTruthy();

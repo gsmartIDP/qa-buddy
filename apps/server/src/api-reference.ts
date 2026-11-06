@@ -25,7 +25,7 @@ export const apiEndpoints: ApiEndpoint[] = [
     summary: 'Decide a held worker restart. Body: { decision: "now" | "after-run" }. "now" ends in-progress runs as interrupted.'
   },
 
-  { method: "GET", path: "/api/repositories", summary: "All repositories with their latest and latest completed runs. Use it to find a repository id by name." },
+  { method: "GET", path: "/api/repositories", summary: "All repositories with their latest and latest completed runs. Every :repositoryId below also accepts the repository name (case-insensitive; 409 with the ids when several share it)." },
   { method: "POST", path: "/api/repositories", summary: "Create a repository configuration." },
   { method: "GET", path: "/api/repositories/:repositoryId", summary: "One repository with retained runs, selectable apps, and app groups." },
   { method: "PATCH", path: "/api/repositories/:repositoryId", summary: "Update a repository configuration." },
@@ -76,7 +76,7 @@ export const apiEndpoints: ApiEndpoint[] = [
   {
     method: "GET",
     path: "/api/repositories/:repositoryId/coverage/file",
-    summary: "One file's coverage and gaps: uncovered line ranges, never-called functions, and partly taken branches.",
+    summary: "One file's coverage and gaps (uncovered line ranges, never-called functions, partly taken branches), plus the slices that include it: which frontends are affected if it changes, and the slice endpoints handled in it.",
     query: { path: "Repository-relative file path, for example apps/api/src/users/users.service.ts" }
   },
 
