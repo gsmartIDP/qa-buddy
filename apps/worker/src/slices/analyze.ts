@@ -5,6 +5,7 @@ import { isApplicationSource, listCodeFiles, ModuleResolver, readSourceText, res
 import { buildClientNameIndex, candidateOperationIds, findNestEndpoints, type NestEndpoint } from "./nest-endpoints.js";
 import { assignOperationIds, orderEndpoints } from "./nest-modules.js";
 import { findEmberDataRequests } from "./ember-data.js";
+import { constructsClient, findGeneratedClientCalls, isGeneratedAxiosClient, parseGeneratedClient } from "./generated-clients.js";
 import { type ClientContext, createsClient, matchCall, type UrlCall, UrlCallScanner } from "./url-calls.js";
 import { listWorkspacePackages, type WorkspacePackage } from "./workspaces.js";
 
@@ -339,7 +340,7 @@ export async function analyzeSlices(
     const unmatchedCalls: UnmatchedCall[] = [];
     const seenUnmatched = new Set<string>();
     /** Adds the routes a request reaches; inferred requests that reach none are dropped, not reported. */
-    const matchRequest = (backend: PreparedBackend, call: UrlCall, site: string, inferred: boolean): void => {
+    const matchRequest = (backend: PreparedBackend, call: UrlCall, site: string, inferred: boolean, name = site): boolean => {
       const directory = backend.options.directory;
       const routes = matchCall(call, backend.routes);
       if (routes.length === 0) {
@@ -348,9 +349,10 @@ export async function analyzeSlices(
           seenUnmatched.add(key);
           unmatchedCalls.push({ backendDirectory: directory, site, method: call.method, path: call.path });
         }
-        return;
+        return false;
       }
-      for (const route of routes) add(directory, route, site, routes.length > 1);
+      for (const route of routes) add(directory, route, name, routes.length > 1);
+      return true;
     };
     const emberRequests = isEmberApp(workspace)
       ? findEmberDataRequests(
@@ -420,6 +422,33 @@ export async function analyzeSlices(
       }
       for (const request of emberRequests) {
         if (backend.options.baseUrlNames?.includes(request.baseName)) matchRequest(backend, request.call, request.site, request.inferred);
+      }
+    }
+
+    // typescript-axios clients generated into the frontend: each belongs to the backend whose
+    // base URL name appears where its classes are constructed (`new AuditApi(config, baseUrl)`).
+    const generatedClients = frontendFiles.filter((file) => isGeneratedAxiosClient(readText(file))).map((file) => parseGeneratedClient(file, readText(file)));
+    if (generatedClients.length) {
+      const clientFiles = new Set(generatedClients.map((client) => client.file));
+      const owners = new Map(
+        generatedClients.map((client) => {
+          const constructors = frontendFiles.filter((file) => !clientFiles.has(file) && constructsClient(readText(file), client));
+          return [client, prepared.filter((backend) => backend.scanner && constructors.some((file) => backend.scanner!.mentions(readText(file))))] as const;
+        })
+      );
+      for (const file of frontendFiles) {
+        if (clientFiles.has(file)) continue;
+        for (const { client, call, operation } of findGeneratedClientCalls(file, readText(file), generatedClients)) {
+          const [first, ...rest] = owners.get(client) ?? [];
+          if (!first) continue;
+          const site = `${resolver.relative(file)}:${call.line}`;
+          // With several candidate backends, report the call as unmatched only when none serves it.
+          if (rest.some((backend) => matchCall(call, backend.routes).length > 0)) {
+            for (const backend of rest) if (matchCall(call, backend.routes).length) matchRequest(backend, call, site, false, operation);
+          } else {
+            matchRequest(first, call, site, false, operation);
+          }
+        }
       }
     }
 
