@@ -18,6 +18,7 @@ import type {
   CoverageMetricName,
   CoverageSnapshot,
   CoverageSummary,
+  FileSliceMembership,
   Repository,
   RepositoryDetail,
   RepositoryInput,
@@ -784,6 +785,14 @@ export class QaBuddyDatabase {
       | RepositoryRow
       | undefined;
     return row ? this.mapRepository(row) : null;
+  }
+
+  /** Repositories whose name matches, ignoring case. Names are not unique, so this can return several. */
+  findRepositoriesByName(name: string): Repository[] {
+    const rows = this.connection
+      .prepare("SELECT * FROM repositories WHERE name = ? COLLATE NOCASE ORDER BY created_at ASC")
+      .all(name.trim()) as RepositoryRow[];
+    return rows.map((row) => this.mapRepository(row));
   }
 
   getRepositoryDetail(id: string, runLimit = 20): RepositoryDetail | null {
@@ -2030,6 +2039,39 @@ export class QaBuddyDatabase {
       })),
       unmatchedCalls: JSON.parse(record.row.unmatched_calls_json) as SliceUnmatchedCall[]
     };
+  }
+
+  /**
+   * The slices that include a file, with the backend it belongs to and the
+   * slice endpoints whose handler is in the file. Files reached only through
+   * imports list no endpoints, since slices record files per backend, not per endpoint.
+   */
+  listFileSlices(repositoryId: string, filePath: string): FileSliceMembership[] {
+    const rows = this.connection
+      .prepare(`
+        SELECT sl.name, sl.frontend_directory, sl.backend_directory AS fallback_backend, sl.endpoints_json, sf.backend_directory
+        FROM slice_files sf JOIN slices sl ON sl.id = sf.slice_id
+        WHERE sl.repository_id = ? AND sf.file_path = ?
+        ORDER BY sl.name COLLATE NOCASE
+      `)
+      .all(repositoryId, filePath) as Array<{
+      name: string;
+      frontend_directory: string;
+      fallback_backend: string;
+      endpoints_json: string;
+      backend_directory: string;
+    }>;
+    return rows.map((row) => {
+      const backendDirectory = row.backend_directory || row.fallback_backend;
+      return {
+        sliceName: row.name,
+        frontendDirectory: row.frontend_directory,
+        backendDirectory,
+        handledEndpoints: (JSON.parse(row.endpoints_json) as SliceEndpoint[])
+          .map((endpoint) => ({ ...endpoint, backendDirectory: endpoint.backendDirectory ?? row.fallback_backend }))
+          .filter((endpoint) => endpoint.file === filePath)
+      };
+    });
   }
 
   /**

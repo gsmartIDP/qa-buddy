@@ -202,6 +202,60 @@ describe("slice API", () => {
     expect((await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}/coverage/files/export?format=xml` })).statusCode).toBe(400);
   });
 
+  it("lists the slices that include a file and the endpoints it handles", async () => {
+    database.replaceSlices(repositoryId, "build-1", "abc123", [
+      {
+        name: "inspect",
+        frontendDirectory: "apps/inspect",
+        endpoints: [
+          { backendDirectory: "apps/api", httpMethod: "get", path: "/x", controller: "X", methodKey: "find", file: "apps/api/src/x.controller.ts", clientNames: ["useFind"] },
+          { backendDirectory: "apps/api", httpMethod: "get", path: "/y", controller: "Y", methodKey: "find", file: "apps/api/src/y.controller.ts", clientNames: ["useY"] }
+        ],
+        backends: [{ directory: "apps/api", endpointCount: 2, files: ["apps/api/src/shared.ts", "apps/api/src/x.controller.ts", "apps/api/src/y.controller.ts"] }]
+      },
+      {
+        name: "scout",
+        frontendDirectory: "apps/scout",
+        endpoints: [{ backendDirectory: "apps/api", httpMethod: "get", path: "/y", controller: "Y", methodKey: "find", file: "apps/api/src/y.controller.ts", clientNames: ["useY"] }],
+        backends: [{ directory: "apps/api", endpointCount: 1, files: ["apps/api/src/shared.ts", "apps/api/src/y.controller.ts"] }]
+      }
+    ]);
+    const metric = { covered: 1, total: 4, percent: 25 };
+    database.replaceCoverageSnapshot(repositoryId, "@acme/api", {
+      runId: "run-1",
+      resolvedSha: "def456",
+      coverageFormat: "istanbul-summary-json",
+      coveragePath: null,
+      summary: { lines: metric, statements: metric, functions: metric, branches: metric },
+      files: ["shared.ts", "x.controller.ts", "lonely.ts"].map((name) => ({ path: `apps/api/src/${name}`, lines: metric, statements: metric, functions: metric, branches: metric }))
+    });
+    const slicesFor = async (file: string) =>
+      (await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}/coverage/file?path=apps/api/src/${file}` })).json().slices;
+
+    expect(await slicesFor("shared.ts")).toEqual([
+      { sliceName: "inspect", frontendDirectory: "apps/inspect", backendDirectory: "apps/api", handledEndpoints: [] },
+      { sliceName: "scout", frontendDirectory: "apps/scout", backendDirectory: "apps/api", handledEndpoints: [] }
+    ]);
+    expect(await slicesFor("x.controller.ts")).toEqual([
+      expect.objectContaining({ sliceName: "inspect", handledEndpoints: [expect.objectContaining({ path: "/x", methodKey: "find" })] })
+    ]);
+    expect(await slicesFor("lonely.ts")).toEqual([]);
+  });
+
+  it("accepts a repository name wherever it takes an id", async () => {
+    const byName = await app.inject({ method: "GET", url: "/api/repositories/platform" });
+    expect(byName.statusCode).toBe(200);
+    expect(byName.json().repository.id).toBe(repositoryId);
+    expect((await app.inject({ method: "GET", url: "/api/repositories/PLATFORM/slices" })).json()).toMatchObject({ slices: [] });
+    expect((await app.inject({ method: "GET", url: "/api/repositories/nope" })).statusCode).toBe(404);
+
+    const twin = await app.inject({ method: "POST", url: "/api/repositories", payload: { ...repositoryInput, githubUrl: "https://github.com/example/platform-fork" } });
+    const ambiguous = await app.inject({ method: "GET", url: "/api/repositories/Platform/slices" });
+    expect(ambiguous.statusCode).toBe(409);
+    expect([...ambiguous.json().repositoryIds].sort()).toEqual([repositoryId, twin.json().repository.id].sort());
+    expect((await app.inject({ method: "GET", url: `/api/repositories/${repositoryId}` })).statusCode).toBe(200);
+  });
+
   it("publishes an API reference that lists exactly the registered routes", async () => {
     const response = await app.inject({ method: "GET", url: "/api" });
     expect(response.json().endpoints).toEqual(apiEndpoints);

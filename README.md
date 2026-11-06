@@ -294,8 +294,8 @@ Common recipes:
 
 ```bash
 BASE=http://localhost:3003
-# Find a repository id by name.
-REPO=$(curl -s $BASE/api/repositories | jq -r '.repositories[] | select(.name == "idplans-platform") | .id')
+# Any :repositoryId also takes the repository name (case-insensitive; 409 with the ids if two share it).
+REPO=idplans-platform
 
 # Every slice with current coverage, per backend.
 curl -s "$BASE/api/repositories/$REPO/slices" | jq '.slices[] | {name, branches: .coverage.branches.percent, backends: [.backends[] | {directory, branches: .coverage.branches.percent}]}'
@@ -309,6 +309,9 @@ curl -s "$BASE/api/repositories/$REPO/coverage/files/export?slice=idinspect&metr
 
 # One file's gaps.
 curl -s "$BASE/api/repositories/$REPO/coverage/file?path=apps/idp-api-service/src/user/user.service.ts" | jq '.file.details'
+
+# Which slices (frontend apps) include a file, and the slice endpoints handled in it.
+curl -s "$BASE/api/repositories/$REPO/coverage/file?path=apps/idp-api-service/src/user/user.service.ts" | jq '.slices'
 ```
 
 Things worth knowing when reading the data:
@@ -359,6 +362,9 @@ Useful endpoints:
 - `GET /api/repositories/:repositoryId/runs`
 - `GET /api/repositories/:repositoryId/coverage` (per-app snapshot metadata)
 - `GET /api/repositories/:repositoryId/coverage/files` (ranked per-file coverage; `app`, `metric`, `maxPercent`, `search`, `limit`, `offset`)
+- `GET /api/repositories/:repositoryId/coverage/file?path=` (one file's gaps and the slices that include it)
+
+Anywhere a `:repositoryId` appears, the repository's name works too.
 - `GET /api/runs/:runId`
 - `POST /api/runs/:runId/cancel` (stop a queued or in-flight run)
 - `GET /api/runs/:runId/log` (full redacted log download)
