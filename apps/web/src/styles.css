@@ -785,3 +785,10 @@ details[open] > summary .slice-setup-title > svg { transform: rotate(90deg); }
 .file-gaps code small { color: var(--faint); }
 .file-gaps-message { margin: 0; padding: 6px 4px 10px; font-size: 12px; }
 @media (max-width: 760px) { .file-gaps { grid-template-columns: 1fr; } }
+
+/* Held worker restart (Docker dev mode). */
+.worker-restart-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; margin: 16px 24px 0; padding: 14px 18px; border: 1px solid #ecd9a8; border-left: 4px solid var(--warning); border-radius: 10px; background: #fdf8ea; color: #5b4a22; font-size: 13px; }
+.worker-restart-banner ul { margin: 6px 0 0; padding-left: 18px; }
+.worker-restart-banner-quiet { border-left-width: 1px; background: #fbf9f2; justify-content: flex-start; }
+.worker-restart-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 640px) { .worker-restart-banner { margin: 12px 16px 0; } }

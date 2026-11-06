@@ -2,6 +2,7 @@ import { type PropsWithChildren, useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { api } from "../api";
 import { Icon } from "./Icon";
+import { WorkerRestartBanner } from "./WorkerRestartBanner";
 
 export function Layout({ children }: PropsWithChildren) {
   const { pathname } = useLocation();
@@ -66,7 +67,10 @@ export function Layout({ children }: PropsWithChildren) {
       </aside>
       <div className="app-content">
         <header className="topbar"><div className="topbar-location"><button ref={menuButtonRef} type="button" className="icon-button mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} aria-expanded={menuOpen} aria-controls="workspace-navigation" onClick={() => setMenuOpen(!menuOpen)}><Icon name={menuOpen ? "close" : "menu"} /></button><span>Workspace</span><Icon name="chevron" size={13} /><strong>{section}</strong></div><div className="topbar-right"><span className={`connection connection-${connection}`} role="status"><i />{connection === "online" ? "Local server connected" : connection === "offline" ? "Server disconnected" : "Connecting to server"}</span><span className="topbar-divider" /><span className="profile-avatar small" title="Local workspace">L</span></div></header>
-        <main id="main-content" tabIndex={-1}>{children}</main>
+        <main id="main-content" tabIndex={-1}>
+          <WorkerRestartBanner />
+          {children}
+        </main>
         <footer><span>QA Buddy <span className="footer-dot">·</span> A little more confidence in every commit.</span><span><Icon name="terminal" size={13} /> Local workspace</span></footer>
       </div>
     </div>
